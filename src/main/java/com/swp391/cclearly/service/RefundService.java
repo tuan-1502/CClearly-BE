@@ -27,6 +27,7 @@ public class RefundService {
 
   private final RefundRepository refundRepository;
   private final OrderRepository orderRepository;
+  private final InventoryService inventoryService;
 
   /**
    * Lấy tất cả yêu cầu trả hàng/hoàn tiền
@@ -117,6 +118,7 @@ public class RefundService {
 
     // Update order status
     Order order = refund.getOrder();
+    inventoryService.releaseStockForOrderItems(order.getOrderItems(), "RETURN_COMPLETED");
     order.setStatus("RETURNED");
     orderRepository.save(order);
 
@@ -134,7 +136,7 @@ public class RefundService {
             ProductVariant v = oi.getVariant();
             return RefundResponse.RefundItemResponse.builder()
                 .name(v != null && v.getProduct() != null ? v.getProduct().getName() : "Sản phẩm")
-                .quantity(1)
+                .quantity(oi.getQuantity() != null ? oi.getQuantity() : 1)
                 .price(oi.getUnitPrice() != null ? oi.getUnitPrice() : BigDecimal.ZERO)
                 .build();
           })

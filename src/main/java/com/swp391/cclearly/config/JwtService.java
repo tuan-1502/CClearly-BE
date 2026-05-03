@@ -97,6 +97,10 @@ public class JwtService {
     return extractClaim(token, claims -> claims.get("role", String.class));
   }
 
+  public String extractTokenType(String token) {
+    return extractClaim(token, claims -> claims.get("type", String.class));
+  }
+
   /**
    * Validate token structure and signature
    */

@@ -1,11 +1,16 @@
 package com.swp391.cclearly.dto.order;
 
 import java.util.UUID;
-import java.util.List;
 import lombok.Data;
 
 @Data
-public class CreateOrderRequest {
+public class BuyNowOrderRequest {
+  // Product selection
+  private UUID variantId;
+  private UUID productId;
+  private UUID lensVariantId;
+  private Integer quantity;
+
   // Address fields — required when addressId is not provided
   private String recipientName;
   private String phone;
@@ -14,15 +19,10 @@ public class CreateOrderRequest {
 
   private String notes;
 
-  // Optional: reuse saved address (skips recipientName/phone/street/city validation)
+  // Optional: reuse saved address
   private UUID addressId;
 
   private String paymentMethod; // cod, payos
-
-  private String paymentType; // DEPOSIT (50%) or FULL (100%) — for preorder
-
+  private String paymentType; // DEPOSIT or FULL
   private String couponCode;
-
-  // Optional: checkout only selected cart items
-  private List<UUID> cartItemIds;
 }

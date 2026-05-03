@@ -178,8 +178,9 @@ public class AuthController {
 
   @Operation(summary = "Đăng xuất", description = "Đăng xuất người dùng. Token sẽ được xóa phía client.")
   @PostMapping("/logout")
-  public ResponseEntity<ApiResponse<Void>> logout() {
-    return ResponseEntity.ok(authService.logout());
+  public ResponseEntity<ApiResponse<Void>> logout(
+      @AuthenticationPrincipal User user) {
+    return ResponseEntity.ok(authService.logout(user));
   }
 
   @Operation(summary = "Làm mới token", description = "Sử dụng refresh token để lấy access token mới.")

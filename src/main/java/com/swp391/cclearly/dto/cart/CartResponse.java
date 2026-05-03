@@ -19,11 +19,15 @@ public class CartResponse {
   public static class CartItemResponse {
     private UUID cartItemId;
     private UUID variantId;
+    private UUID lensVariantId;
     private String productName;
+    private String lensProductName;
     private String variantSku;
+    private String lensVariantSku;
     private String colorName;
     private String productType;
     private Float refractiveIndex;
+    private Float lensRefractiveIndex;
     private BigDecimal price;
     private Integer quantity;
     private String imageUrl;

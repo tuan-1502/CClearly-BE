@@ -1,12 +1,10 @@
 package com.swp391.cclearly.controller;
 
 import com.swp391.cclearly.dto.base.ApiResponse;
-import com.swp391.cclearly.entity.Promotion;
-import com.swp391.cclearly.repository.PromotionRepository;
+import com.swp391.cclearly.exception.BadRequestException;
 import com.swp391.cclearly.repository.SystemConfigRepository;
+import com.swp391.cclearly.service.PromotionValidationService;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
-import java.util.HashMap;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -17,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 public class PublicController {
 
   private final SystemConfigRepository systemConfigRepository;
-  private final PromotionRepository promotionRepository;
+  private final PromotionValidationService promotionValidationService;
 
   @GetMapping("/maintenance-status")
   public ApiResponse<Map<String, Object>> getMaintenanceStatus() {
@@ -64,56 +62,13 @@ public class PublicController {
       return ApiResponse.error("Vui long nhap ma giam gia");
     }
 
-    Promotion promo = promotionRepository.findByCode(code)
-        .orElse(null);
-
-    if (promo == null) {
-      return ApiResponse.error("Ma giam gia khong ton tai");
+    try {
+      var appliedPromotion = promotionValidationService.validate(code, orderTotal);
+      return ApiResponse.success(
+          "Ap dung ma giam gia thanh cong",
+          promotionValidationService.toValidationResponse(appliedPromotion));
+    } catch (BadRequestException ex) {
+      return ApiResponse.error(ex.getMessage());
     }
-
-    if (!Boolean.TRUE.equals(promo.getIsActive())) {
-      return ApiResponse.error("Ma giam gia da het hieu luc");
-    }
-
-    if (promo.getValue() == null) {
-      return ApiResponse.error("Ma giam gia khong hop le");
-    }
-
-    if (promo.getUsageLimit() != null && promo.getOrders() != null
-        && promo.getOrders().size() >= promo.getUsageLimit()) {
-      return ApiResponse.error("Ma giam gia da het luot su dung");
-    }
-
-    if (promo.getMinOrder() != null && orderTotal.compareTo(promo.getMinOrder()) < 0) {
-      return ApiResponse.error("Don hang chua dat gia tri toi thieu de dung ma nay");
-    }
-
-    BigDecimal discountAmount;
-    boolean isPercent = "PERCENT".equalsIgnoreCase(promo.getDiscountType())
-        || "PERCENTAGE".equalsIgnoreCase(promo.getDiscountType());
-    if (isPercent) {
-      discountAmount = orderTotal.multiply(promo.getValue())
-          .divide(BigDecimal.valueOf(100), 0, RoundingMode.FLOOR);
-      if (promo.getMaxDiscount() != null && discountAmount.compareTo(promo.getMaxDiscount()) > 0) {
-        discountAmount = promo.getMaxDiscount();
-      }
-    } else {
-      discountAmount = promo.getValue();
-    }
-
-    if (discountAmount.compareTo(orderTotal) > 0) {
-      discountAmount = orderTotal;
-    }
-
-    Map<String, Object> result = new HashMap<>();
-    result.put("code", promo.getCode());
-    result.put("discountType", isPercent ? "PERCENTAGE" : "FIXED");
-    result.put("value", promo.getValue());
-    result.put("discountAmount", discountAmount);
-    result.put("maxDiscount", promo.getMaxDiscount());
-    result.put("minOrder", promo.getMinOrder());
-    result.put("description", promo.getDescription() != null ? promo.getDescription() : "");
-
-    return ApiResponse.success("Ap dung ma giam gia thanh cong", result);
   }
 }

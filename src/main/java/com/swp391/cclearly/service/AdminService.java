@@ -122,11 +122,14 @@ public class AdminService {
         for (var item : o.getOrderItems()) {
           if (item.getVariant() != null && item.getVariant().getProduct() != null) {
             UUID productId = item.getVariant().getProduct().getProductId();
+            long quantity = item.getQuantity() != null ? item.getQuantity() : 1L;
             productNames.putIfAbsent(productId, item.getVariant().getProduct().getName());
             productTypes.putIfAbsent(productId, item.getVariant().getProduct().getCategoryType());
-            productSold.merge(productId, 1L, Long::sum);
+            productSold.merge(productId, quantity, Long::sum);
             productRevenue.merge(productId,
-                item.getUnitPrice() != null ? item.getUnitPrice() : BigDecimal.ZERO,
+                item.getUnitPrice() != null
+                    ? item.getUnitPrice().multiply(BigDecimal.valueOf(quantity))
+                    : BigDecimal.ZERO,
                 BigDecimal::add);
           }
         }

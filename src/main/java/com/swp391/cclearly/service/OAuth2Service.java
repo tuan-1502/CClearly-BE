@@ -4,10 +4,12 @@ import com.swp391.cclearly.config.JwtService;
 import com.swp391.cclearly.dto.auth.AuthResponse;
 import com.swp391.cclearly.dto.auth.GoogleLoginRequest;
 import com.swp391.cclearly.dto.base.ApiResponse;
+import com.swp391.cclearly.entity.LoginSession;
 import com.swp391.cclearly.entity.Role;
 import com.swp391.cclearly.entity.User;
 import com.swp391.cclearly.exception.BadRequestException;
 import com.swp391.cclearly.exception.ResourceNotFoundException;
+import com.swp391.cclearly.repository.LoginSessionRepository;
 import com.swp391.cclearly.repository.RoleRepository;
 import com.swp391.cclearly.repository.UserRepository;
 import java.time.Instant;
@@ -32,6 +34,7 @@ public class OAuth2Service {
   private final UserRepository userRepository;
   private final RoleRepository roleRepository;
   private final JwtService jwtService;
+  private final LoginSessionRepository loginSessionRepository;
 
   @Value("${spring.security.oauth2.client.registration.google.client-id}")
   private String googleClientId;
@@ -98,6 +101,8 @@ public class OAuth2Service {
         user.getUserId()
     );
 
+    persistLoginSession(user, refreshToken);
+
     AuthResponse authResponse = AuthResponse.builder()
         .accessToken(accessToken)
         .refreshToken(refreshToken)
@@ -148,5 +153,15 @@ public class OAuth2Service {
       log.error("Failed to verify Google token: {}", e.getMessage());
       throw new BadRequestException("Google token không hợp lệ: " + e.getMessage());
     }
+  }
+
+  private void persistLoginSession(User user, String refreshToken) {
+    LoginSession session = LoginSession.builder()
+        .user(user)
+        .refreshToken(refreshToken)
+        .expiredAt(Instant.now().plusMillis(jwtService.getRefreshTokenExpiration()))
+        .lastAccessedAt(Instant.now())
+        .build();
+    loginSessionRepository.save(session);
   }
 }

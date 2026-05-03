@@ -43,6 +43,7 @@ public class SecurityConfig {
         .authorizeHttpRequests(auth -> auth
             // 🔒 Auth endpoints that require authentication
             .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
+            .requestMatchers(HttpMethod.POST, "/api/auth/logout").authenticated()
 
             // ✅ Public endpoints - Auth APIs
             .requestMatchers(
@@ -98,6 +99,10 @@ public class SecurityConfig {
 
             // 🔒 Customer endpoints
             .requestMatchers("/api/users/**").hasAnyRole("CUSTOMER", "ADMIN", "MANAGER", "SALES_STAFF", "OPERATION_STAFF")
+            .requestMatchers(HttpMethod.GET, "/api/orders/admin/**")
+                .hasAnyRole("ADMIN", "MANAGER", "SALES_STAFF", "OPERATION_STAFF")
+            .requestMatchers(HttpMethod.PATCH, "/api/orders/*/status")
+                .hasAnyRole("ADMIN", "MANAGER", "SALES_STAFF", "OPERATION_STAFF")
             .requestMatchers("/api/orders/**").authenticated()
             .requestMatchers("/api/cart/**").authenticated()
 
