@@ -21,4 +21,10 @@ public interface OrderRepository extends JpaRepository<Order, UUID>, JpaSpecific
 
   @Query("SELECT COUNT(o) FROM Order o WHERE o.status = :status")
   long countByStatus(String status);
+
+  long countByCoupon_PromotionId(UUID promotionId);
+
+  long countByCodeStartingWith(String prefix);
+
+  boolean existsByCode(String code);
 }

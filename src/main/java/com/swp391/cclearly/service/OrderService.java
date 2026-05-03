@@ -1,6 +1,8 @@
 package com.swp391.cclearly.service;
 
 import com.swp391.cclearly.dto.base.ApiResponse;
+import com.swp391.cclearly.dto.cart.AddCartItemRequest;
+import com.swp391.cclearly.dto.order.BuyNowOrderRequest;
 import com.swp391.cclearly.dto.order.CreateOrderRequest;
 import com.swp391.cclearly.dto.order.OrderPageResponse;
 import com.swp391.cclearly.dto.order.OrderResponse;
@@ -8,13 +10,13 @@ import com.swp391.cclearly.dto.order.ReturnRequest;
 import com.swp391.cclearly.dto.prescription.SavePrescriptionRequest;
 import com.swp391.cclearly.entity.Address;
 import com.swp391.cclearly.entity.Cart;
+import com.swp391.cclearly.entity.CartItem;
 import com.swp391.cclearly.entity.Order;
 import com.swp391.cclearly.entity.OrderItem;
 import com.swp391.cclearly.entity.Payment;
 import com.swp391.cclearly.entity.Prescription;
 import com.swp391.cclearly.entity.ProductImage;
 import com.swp391.cclearly.entity.ProductVariant;
-import com.swp391.cclearly.entity.Promotion;
 import com.swp391.cclearly.entity.Refund;
 import com.swp391.cclearly.entity.User;
 import com.swp391.cclearly.exception.BadRequestException;
@@ -23,13 +25,17 @@ import com.swp391.cclearly.repository.AddressRepository;
 import com.swp391.cclearly.repository.CartRepository;
 import com.swp391.cclearly.repository.OrderItemRepository;
 import com.swp391.cclearly.repository.OrderRepository;
-import com.swp391.cclearly.repository.PromotionRepository;
 import com.swp391.cclearly.repository.RefundRepository;
 import com.swp391.cclearly.repository.SystemConfigRepository;
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +49,17 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 @Transactional
 public class OrderService {
+  private static final DateTimeFormatter ORDER_CODE_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyyMMdd");
+
+  private static final Set<String> VALID_ORDER_STATUSES = Set.of(
+      "PENDING",
+      "CONFIRMED",
+      "PROCESSING",
+      "SHIPPED",
+      "DELIVERED",
+      "CANCELLED",
+      "RETURN_REQUESTED",
+      "RETURNED");
 
   private final OrderRepository orderRepository;
   private final CartRepository cartRepository;
@@ -50,7 +67,9 @@ public class OrderService {
   private final RefundRepository refundRepository;
   private final OrderItemRepository orderItemRepository;
   private final SystemConfigRepository systemConfigRepository;
-  private final PromotionRepository promotionRepository;
+  private final InventoryService inventoryService;
+  private final PromotionValidationService promotionValidationService;
+  private final CartService cartService;
 
   public ApiResponse<List<OrderResponse>> getUserOrders(User user) {
     List<Order> orders = orderRepository.findByUserOrderByOrderIdDesc(user);
@@ -62,9 +81,7 @@ public class OrderService {
     Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
-    if (!order.getUser().getUserId().equals(user.getUserId())
-        && !user.getRole().getRoleName().equals("ADMIN")
-        && !user.getRole().getRoleName().equals("SALES_STAFF")) {
+    if (!canAccessOrder(user, order)) {
       throw new BadRequestException("Không có quyền xem đơn hàng này");
     }
 
@@ -79,40 +96,13 @@ public class OrderService {
       throw new BadRequestException("Giỏ hàng trống");
     }
 
-    // Resolve or create address
-    Address address;
-    if (request.getAddressId() != null) {
-      address = addressRepository.findById(request.getAddressId())
-          .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy địa chỉ"));
-      // Ensure the address belongs to this user
-      if (!address.getUser().getUserId().equals(user.getUserId())) {
-        throw new BadRequestException("Địa chỉ không hợp lệ");
-      }
-    } else {
-      // Validate required fields when not using saved address
-      if (request.getStreet() == null || request.getStreet().isBlank()) {
-        throw new BadRequestException("Địa chỉ không được để trống");
-      }
-      if (request.getPhone() == null || request.getPhone().isBlank()) {
-        throw new BadRequestException("Số điện thoại không được để trống");
-      }
-      address = Address.builder()
-          .user(user)
-          .name(request.getRecipientName())
-          .phone(request.getPhone())
-          .street(request.getStreet())
-          .city(request.getCity())
-          .isDefault(false)
-          .build();
-      address = addressRepository.save(address);
-    }
-
-    // Build order
-    String orderCode = "CC" + System.currentTimeMillis();
+    Address address = resolveCheckoutAddress(user, request);
+    List<com.swp391.cclearly.entity.CartItem> selectedCartItems = resolveSelectedCartItems(cart, request);
 
     // Check if any cart item is a preorder variant
-    boolean hasPreorder = cart.getCartItems().stream()
+    boolean hasPreorder = selectedCartItems.stream()
         .anyMatch(ci -> Boolean.TRUE.equals(ci.getVariant().getIsPreorder()));
+    String orderCode = generateOrderCode(hasPreorder);
 
     Order order = Order.builder()
         .user(user)
@@ -129,10 +119,11 @@ public class OrderService {
     BigDecimal total = BigDecimal.ZERO;
     BigDecimal preorderTotal = BigDecimal.ZERO;
 
-    for (var cartItem : cart.getCartItems()) {
+    for (var cartItem : selectedCartItems) {
       ProductVariant v = cartItem.getVariant();
-      BigDecimal price = v.getSalePrice() != null ? v.getSalePrice() : v.getProduct().getBasePrice();
-      BigDecimal lineTotal = price.multiply(BigDecimal.valueOf(cartItem.getQuantity()));
+      BigDecimal price = calculateUnitPrice(v, cartItem.getLensVariant());
+      int quantity = cartItem.getQuantity() != null ? cartItem.getQuantity() : 1;
+      BigDecimal lineTotal = price.multiply(BigDecimal.valueOf(quantity));
       total = total.add(lineTotal);
 
       if (Boolean.TRUE.equals(v.getIsPreorder())) {
@@ -144,6 +135,7 @@ public class OrderService {
           .variant(v)
           .lensVariant(cartItem.getLensVariant())
           .unitPrice(price)
+          .quantity(quantity)
           .build();
       orderItems.add(oi);
     }
@@ -166,26 +158,15 @@ public class OrderService {
     // Apply coupon if provided
     BigDecimal discountAmount = BigDecimal.ZERO;
     if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
-      Promotion promo = promotionRepository.findByCode(request.getCouponCode())
-          .orElse(null);
-      if (promo != null && Boolean.TRUE.equals(promo.getIsActive())) {
-        if (promo.getMinOrder() == null || total.compareTo(promo.getMinOrder()) >= 0) {
-          if ("PERCENTAGE".equalsIgnoreCase(promo.getDiscountType())) {
-            discountAmount = total.multiply(promo.getValue())
-                .divide(BigDecimal.valueOf(100), 0, java.math.RoundingMode.FLOOR);
-            if (promo.getMaxDiscount() != null && discountAmount.compareTo(promo.getMaxDiscount()) > 0) {
-              discountAmount = promo.getMaxDiscount();
-            }
-          } else {
-            discountAmount = promo.getValue() != null ? promo.getValue() : BigDecimal.ZERO;
-          }
-          order.setCoupon(promo);
-          order.setDiscountAmount(discountAmount);
-        }
-      }
+      PromotionValidationService.AppliedPromotion appliedPromotion =
+          promotionValidationService.validate(request.getCouponCode(), total);
+      discountAmount = appliedPromotion.discountAmount();
+      order.setCoupon(appliedPromotion.promotion());
+      order.setDiscountAmount(discountAmount);
     }
 
     order.setFinalAmount(total.add(shippingFee).subtract(discountAmount));
+    inventoryService.reserveStockForOrderItems(orderItems, "ORDER_CREATE");
 
     order = orderRepository.save(order);
 
@@ -201,15 +182,11 @@ public class OrderService {
       order.getPayments().add(codPayment);
     } else {
       // Non-preorder: single payment
-      String method = request.getPaymentMethod() != null
-          ? request.getPaymentMethod().toUpperCase() : "COD";
-      if ("BANKING".equalsIgnoreCase(request.getPaymentMethod())) {
-        method = "PAYOS";
-      }
+      String method = normalizePaymentMethod(request.getPaymentMethod());
       Payment payment = Payment.builder()
           .order(order)
           .method(method)
-          .amount(total)
+          .amount(order.getFinalAmount())
           .status("COD".equals(method) ? "PENDING" : "COMPLETED")
           .payosOrderCode("PAYOS".equals(method) ? "PAYOS-" + orderCode : null)
           .build();
@@ -217,11 +194,143 @@ public class OrderService {
     }
     order = orderRepository.save(order);
 
-    // Clear cart
-    cart.getCartItems().clear();
+    // Remove only ordered items from cart.
+    cart.getCartItems().removeAll(selectedCartItems);
     cartRepository.save(cart);
 
     return ApiResponse.success("Đặt hàng thành công", toResponse(order));
+  }
+
+  public ApiResponse<OrderResponse> createOrderBuyNow(User user, BuyNowOrderRequest request) {
+    AddCartItemRequest addCartItemRequest = new AddCartItemRequest();
+    addCartItemRequest.setVariantId(request.getVariantId());
+    addCartItemRequest.setProductId(request.getProductId());
+    addCartItemRequest.setLensVariantId(request.getLensVariantId());
+    addCartItemRequest.setQuantity(request.getQuantity() != null ? request.getQuantity() : 1);
+
+    cartService.addToCart(user, addCartItemRequest);
+    Cart cart = cartRepository.findByUser(user)
+        .orElseThrow(() -> new BadRequestException("Giỏ hàng trống"));
+    UUID selectedCartItemId = cart.getCartItems().stream()
+        .filter(item -> isBuyNowTarget(item, request))
+        .map(CartItem::getCartItemId)
+        .findFirst()
+        .orElse(null);
+
+    CreateOrderRequest createOrderRequest = new CreateOrderRequest();
+    createOrderRequest.setRecipientName(request.getRecipientName());
+    createOrderRequest.setPhone(request.getPhone());
+    createOrderRequest.setStreet(request.getStreet());
+    createOrderRequest.setCity(request.getCity());
+    createOrderRequest.setNotes(request.getNotes());
+    createOrderRequest.setAddressId(request.getAddressId());
+    createOrderRequest.setPaymentMethod(request.getPaymentMethod());
+    createOrderRequest.setPaymentType(request.getPaymentType());
+    createOrderRequest.setCouponCode(request.getCouponCode());
+    if (selectedCartItemId != null) {
+      createOrderRequest.setCartItemIds(List.of(selectedCartItemId));
+    }
+
+    return createOrder(user, createOrderRequest);
+  }
+
+  private boolean isBuyNowTarget(CartItem item, BuyNowOrderRequest request) {
+    if (request.getVariantId() != null) {
+      return item.getVariant() != null
+          && request.getVariantId().equals(item.getVariant().getVariantId())
+          && java.util.Objects.equals(
+              request.getLensVariantId(),
+              item.getLensVariant() != null ? item.getLensVariant().getVariantId() : null);
+    }
+
+    if (request.getProductId() != null) {
+      return item.getVariant() != null
+          && item.getVariant().getProduct() != null
+          && request.getProductId().equals(item.getVariant().getProduct().getProductId())
+          && java.util.Objects.equals(
+              request.getLensVariantId(),
+              item.getLensVariant() != null ? item.getLensVariant().getVariantId() : null);
+    }
+
+    return false;
+  }
+
+  private Address resolveCheckoutAddress(User user, CreateOrderRequest request) {
+    if (request.getAddressId() != null) {
+      Address address = addressRepository.findById(request.getAddressId())
+          .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy địa chỉ"));
+      if (!address.getUser().getUserId().equals(user.getUserId())) {
+        throw new BadRequestException("Địa chỉ không hợp lệ");
+      }
+      return address;
+    }
+
+    if (request.getStreet() == null || request.getStreet().isBlank()) {
+      throw new BadRequestException("Địa chỉ không được để trống");
+    }
+    if (request.getPhone() == null || request.getPhone().isBlank()) {
+      throw new BadRequestException("Số điện thoại không được để trống");
+    }
+
+    Address address = Address.builder()
+        .user(user)
+        .name(request.getRecipientName())
+        .phone(request.getPhone())
+        .street(request.getStreet())
+        .city(request.getCity())
+        .isDefault(false)
+        .build();
+    return addressRepository.save(address);
+  }
+
+  private List<com.swp391.cclearly.entity.CartItem> resolveSelectedCartItems(
+      Cart cart,
+      CreateOrderRequest request) {
+    if (request.getCartItemIds() == null || request.getCartItemIds().isEmpty()) {
+      return new ArrayList<>(cart.getCartItems());
+    }
+
+    Set<UUID> selectedIds = new HashSet<>(request.getCartItemIds());
+    List<CartItem> selectedItems = cart.getCartItems().stream()
+        .filter(item -> selectedIds.contains(item.getCartItemId()))
+        .collect(Collectors.toList());
+
+    if (selectedItems.isEmpty()) {
+      if (cart.getCartItems().size() == 1) {
+        return new ArrayList<>(cart.getCartItems());
+      }
+      throw new BadRequestException("Vui lòng chọn sản phẩm cần thanh toán");
+    }
+
+    return selectedItems;
+  }
+
+  private String normalizePaymentMethod(String paymentMethod) {
+    if (paymentMethod == null || paymentMethod.isBlank()) {
+      return "COD";
+    }
+
+    return switch (paymentMethod.trim().toUpperCase(Locale.ROOT)) {
+      case "COD" -> "COD";
+      case "PAYOS", "BANKING", "BANK_TRANSFER", "BANKTRANSFER", "ONLINE" -> "PAYOS";
+      default -> throw new BadRequestException("Phương thức thanh toán không hợp lệ");
+    };
+  }
+
+  private String generateOrderCode(boolean hasPreorder) {
+    String typePrefix = hasPreorder ? "PRE" : "ORD";
+    String datePart = LocalDate.now().format(ORDER_CODE_DATE_FORMAT);
+    String codePrefix = typePrefix + "-" + datePart;
+
+    long baseSeq = orderRepository.countByCodeStartingWith(codePrefix) + 1;
+    long seq = Math.max(baseSeq, 1);
+
+    String code = codePrefix + String.format("%03d", seq);
+    while (orderRepository.existsByCode(code)) {
+      seq++;
+      code = codePrefix + String.format("%03d", seq);
+    }
+    return code;
   }
 
   public ApiResponse<Void> cancelOrder(User user, UUID orderId) {
@@ -236,6 +345,7 @@ public class OrderService {
       throw new BadRequestException("Không thể hủy đơn hàng ở trạng thái hiện tại");
     }
 
+    inventoryService.releaseStockForOrderItems(order.getOrderItems(), "ORDER_CANCEL");
     order.setStatus("CANCELLED");
     orderRepository.save(order);
 
@@ -245,7 +355,11 @@ public class OrderService {
   public ApiResponse<Void> updateOrderStatus(UUID orderId, String status) {
     Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
-    order.setStatus(status.toUpperCase());
+    String newStatus = normalizeOrderStatus(status);
+    if (!"CANCELLED".equals(order.getStatus()) && "CANCELLED".equals(newStatus)) {
+      inventoryService.releaseStockForOrderItems(order.getOrderItems(), "ORDER_CANCEL");
+    }
+    order.setStatus(newStatus);
     orderRepository.save(order);
     return ApiResponse.success("Cập nhật trạng thái đơn hàng thành công", null);
   }
@@ -256,7 +370,11 @@ public class OrderService {
   public ApiResponse<Void> updateOrderStatusWithNote(UUID orderId, String status, String note) {
     Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
-    order.setStatus(status.toUpperCase());
+    String newStatus = normalizeOrderStatus(status);
+    if (!"CANCELLED".equals(order.getStatus()) && "CANCELLED".equals(newStatus)) {
+      inventoryService.releaseStockForOrderItems(order.getOrderItems(), "ORDER_CANCEL");
+    }
+    order.setStatus(newStatus);
     // If note looks like a tracking number (for shipped status), save it
     if (note != null && !note.isBlank()) {
       if ("SHIPPED".equalsIgnoreCase(status)) {
@@ -267,13 +385,30 @@ public class OrderService {
     return ApiResponse.success("Cập nhật trạng thái đơn hàng thành công", null);
   }
 
+  private String normalizeOrderStatus(String status) {
+    if (status == null || status.isBlank()) {
+      throw new BadRequestException("Trạng thái đơn hàng không được để trống");
+    }
+
+    String normalizedStatus = status.trim().toUpperCase();
+    if (!VALID_ORDER_STATUSES.contains(normalizedStatus)) {
+      throw new BadRequestException("Trạng thái đơn hàng không hợp lệ");
+    }
+
+    return normalizedStatus;
+  }
+
   /**
    * Lưu thông tin đơn kính (prescription) cho order item
    * FE gửi: rightEye(sph/cyl/axis/add), leftEye(sph/cyl/axis/add), pd, imageUrl
    */
-  public ApiResponse<Void> savePrescription(UUID orderId, SavePrescriptionRequest request) {
+  public ApiResponse<Void> savePrescription(User user, UUID orderId, SavePrescriptionRequest request) {
     Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
+
+    if (!canAccessOrder(user, order)) {
+      throw new BadRequestException("Không có quyền cập nhật đơn hàng này");
+    }
 
     // Find the first order item (or by orderItemId if provided)
     OrderItem targetItem = null;
@@ -324,6 +459,22 @@ public class OrderService {
     orderItemRepository.save(targetItem);
 
     return ApiResponse.success("Lưu thông tin đơn kính thành công", null);
+  }
+
+  private boolean canAccessOrder(User user, Order order) {
+    if (user == null || order == null || user.getRole() == null) {
+      return false;
+    }
+
+    if (order.getUser() != null && order.getUser().getUserId().equals(user.getUserId())) {
+      return true;
+    }
+
+    String role = user.getRole().getRoleName();
+    return "ADMIN".equals(role)
+        || "MANAGER".equals(role)
+        || "SALES_STAFF".equals(role)
+        || "OPERATION_STAFF".equals(role);
   }
 
   // Admin: get all orders with pagination & filters
@@ -421,7 +572,7 @@ public class OrderService {
               .productType(productType)
               .refractiveIndex(v.getRefractiveIndex())
               .unitPrice(oi.getUnitPrice())
-              .quantity(1)
+              .quantity(oi.getQuantity() != null ? oi.getQuantity() : 1)
               .imageUrl(imageUrl)
               .prescription(rxInfo)
               .build();
@@ -475,5 +626,20 @@ public class OrderService {
         .createdAt(o.getCreatedAt())
         .items(items)
         .build();
+  }
+
+  private BigDecimal calculateUnitPrice(ProductVariant variant, ProductVariant lensVariant) {
+    BigDecimal price = variant.getSalePrice() != null
+        ? variant.getSalePrice()
+        : variant.getProduct().getBasePrice();
+
+    if (lensVariant != null) {
+      BigDecimal lensPrice = lensVariant.getSalePrice() != null
+          ? lensVariant.getSalePrice()
+          : lensVariant.getProduct().getBasePrice();
+      price = price.add(lensPrice);
+    }
+
+    return price;
   }
 }

@@ -34,6 +34,9 @@ public class OrderItem {
     @Column(name = "unit_price", precision = 19, scale = 2)
     private BigDecimal unitPrice;
 
+    @Column(name = "quantity")
+    private Integer quantity;
+
     @OneToOne(mappedBy = "orderItem", cascade = CascadeType.ALL)
     private Prescription prescription;
 }

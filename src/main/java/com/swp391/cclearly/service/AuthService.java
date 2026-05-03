@@ -1,12 +1,27 @@
 package com.swp391.cclearly.service;
 
 import com.swp391.cclearly.config.JwtService;
-import com.swp391.cclearly.dto.auth.*;
+import com.swp391.cclearly.dto.auth.AuthResponse;
+import com.swp391.cclearly.dto.auth.ForgotPasswordRequest;
+import com.swp391.cclearly.dto.auth.LoginRequest;
+import com.swp391.cclearly.dto.auth.RefreshTokenRequest;
+import com.swp391.cclearly.dto.auth.RegisterRequest;
+import com.swp391.cclearly.dto.auth.ResendOtpRequest;
+import com.swp391.cclearly.dto.auth.ResetPasswordRequest;
+import com.swp391.cclearly.dto.auth.VerifyEmailRequest;
 import com.swp391.cclearly.dto.base.ApiResponse;
-import com.swp391.cclearly.entity.*;
+import com.swp391.cclearly.entity.EmailVerification;
+import com.swp391.cclearly.entity.LoginSession;
+import com.swp391.cclearly.entity.PasswordResetToken;
+import com.swp391.cclearly.entity.Role;
+import com.swp391.cclearly.entity.User;
 import com.swp391.cclearly.exception.BadRequestException;
 import com.swp391.cclearly.exception.ResourceNotFoundException;
-import com.swp391.cclearly.repository.*;
+import com.swp391.cclearly.repository.EmailVerificationRepository;
+import com.swp391.cclearly.repository.LoginSessionRepository;
+import com.swp391.cclearly.repository.PasswordResetTokenRepository;
+import com.swp391.cclearly.repository.RoleRepository;
+import com.swp391.cclearly.repository.UserRepository;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -35,6 +50,7 @@ public class AuthService {
   private final AuthenticationManager authenticationManager;
   private final EmailService emailService;
   private final AuditLogService auditLogService;
+  private final LoginSessionRepository loginSessionRepository;
 
   @Value("${app.otp.expiration-minutes:5}")
   private int otpExpirationMinutes;
@@ -46,30 +62,23 @@ public class AuthService {
   private static final String USER_STATUS_ACTIVE = "ACTIVE";
   private static final String USER_STATUS_PENDING = "PENDING_VERIFICATION";
 
-  /**
-   * Register a new user
-   */
   @Transactional
   public ApiResponse<AuthResponse> register(RegisterRequest request) {
-    // Check if email already exists
     if (userRepository.existsByEmail(request.getEmail())) {
-      throw new BadRequestException("Email đã được sử dụng");
+      throw new BadRequestException("Email da duoc su dung");
     }
 
-    // Check if phone number already exists
     if (request.getPhoneNumber() != null
         && !request.getPhoneNumber().isEmpty()
         && userRepository.existsByPhoneNumber(request.getPhoneNumber())) {
-      throw new BadRequestException("Số điện thoại đã được sử dụng");
+      throw new BadRequestException("So dien thoai da duoc su dung");
     }
 
-    // Get customer role
     Role customerRole =
         roleRepository
             .findByRoleName(DEFAULT_ROLE)
-            .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy role CUSTOMER"));
+            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay role CUSTOMER"));
 
-    // Create new user
     User user =
         User.builder()
             .email(request.getEmail())
@@ -84,124 +93,96 @@ public class AuthService {
 
     user = userRepository.save(user);
 
-    // Generate OTP for email verification
     String otpCode = generateOtp();
     createEmailVerification(user, otpCode);
-
-    // Send OTP email
     emailService.sendOtpEmail(user.getEmail(), user.getFullName(), otpCode);
 
-    // Generate token
     AuthResponse authResponse = generateAuthResponse(user);
-
-    return ApiResponse.success("Đăng ký thành công. Vui lòng xác thực email.", authResponse);
+    return ApiResponse.success("Dang ky thanh cong. Vui long xac thuc email.", authResponse);
   }
 
-  /**
-   * Login with email and password
-   */
   @Transactional
   public ApiResponse<AuthResponse> login(LoginRequest request) {
     try {
       authenticationManager.authenticate(
           new UsernamePasswordAuthenticationToken(request.getEmail(), request.getPassword()));
     } catch (BadCredentialsException e) {
-      throw new BadRequestException("Email hoặc mật khẩu không đúng");
+      throw new BadRequestException("Email hoac mat khau khong dung");
     }
 
     User user =
         userRepository
             .findByEmail(request.getEmail())
-            .orElseThrow(() -> new BadRequestException("Email hoặc mật khẩu không đúng"));
+            .orElseThrow(() -> new BadRequestException("Email hoac mat khau khong dung"));
 
-    // Check user status
-    if (!"ACTIVE".equals(user.getStatus()) && !"PENDING_VERIFICATION".equals(user.getStatus())) {
-      throw new BadRequestException("Tài khoản đã bị khóa hoặc vô hiệu hóa");
+    if (!USER_STATUS_ACTIVE.equals(user.getStatus()) && !USER_STATUS_PENDING.equals(user.getStatus())) {
+      throw new BadRequestException("Tai khoan da bi khoa hoac vo hieu hoa");
     }
 
-    // Update last login
     user.setLastLogin(Instant.now());
     userRepository.save(user);
 
-    // Generate token
     AuthResponse authResponse = generateAuthResponse(user);
 
-    auditLogService.log(user, "LOGIN",
-        "Đăng nhập thành công: " + user.getEmail());
-    return ApiResponse.success("Đăng nhập thành công", authResponse);
+    auditLogService.log(user, "LOGIN", "Dang nhap thanh cong: " + user.getEmail());
+    return ApiResponse.success("Dang nhap thanh cong", authResponse);
   }
 
-  /**
-   * Verify email with OTP
-   */
   @Transactional
   public ApiResponse<Void> verifyEmail(VerifyEmailRequest request) {
     User user =
         userRepository
             .findByEmail(request.getEmail())
-            .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
 
     if (Boolean.TRUE.equals(user.getIsEmailVerified())) {
-      throw new BadRequestException("Email đã được xác thực trước đó");
+      throw new BadRequestException("Email da duoc xac thuc truoc do");
     }
 
     EmailVerification verification =
         emailVerificationRepository
             .findByUserAndOtpCodeAndVerifiedFalse(user, request.getOtpCode())
-            .orElseThrow(() -> new BadRequestException("Mã OTP không đúng"));
+            .orElseThrow(() -> new BadRequestException("Ma OTP khong dung"));
 
-    // Check if OTP is expired
     if (verification.getExpiredAt().isBefore(Instant.now())) {
-      throw new BadRequestException("Mã OTP đã hết hạn");
+      throw new BadRequestException("Ma OTP da het han");
     }
 
-    // Mark verification as verified
     verification.setVerified(true);
     emailVerificationRepository.save(verification);
 
-    // Update user
     user.setIsEmailVerified(true);
     user.setStatus(USER_STATUS_ACTIVE);
     userRepository.save(user);
 
-    return ApiResponse.success("Xác thực email thành công");
+    return ApiResponse.success("Xac thuc email thanh cong");
   }
 
-  /**
-   * Resend OTP for email verification
-   */
   @Transactional
   public ApiResponse<Void> resendOtp(ResendOtpRequest request) {
     User user =
         userRepository
             .findByEmail(request.getEmail())
-            .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
 
     if (Boolean.TRUE.equals(user.getIsEmailVerified())) {
-      throw new BadRequestException("Email đã được xác thực trước đó");
+      throw new BadRequestException("Email da duoc xac thuc truoc do");
     }
 
-    // Generate new OTP
     String otpCode = generateOtp();
     createEmailVerification(user, otpCode);
-
-    // Send OTP email
     emailService.sendOtpEmail(user.getEmail(), user.getFullName(), otpCode);
 
-    return ApiResponse.success("Đã gửi lại mã OTP. Vui lòng kiểm tra email.");
+    return ApiResponse.success("Da gui lai ma OTP. Vui long kiem tra email.");
   }
 
-  /**
-   * Request password reset
-   */
   @Transactional
   public ApiResponse<Void> forgotPassword(ForgotPasswordRequest request) {
     User user =
         userRepository
             .findByEmail(request.getEmail())
-            .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng với email này"));
+            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung voi email nay"));
 
-    // Generate reset token
     String token = UUID.randomUUID().toString();
 
     PasswordResetToken resetToken =
@@ -214,71 +195,79 @@ public class AuthService {
             .build();
 
     passwordResetTokenRepository.save(resetToken);
-
-    // Send password reset email
     emailService.sendPasswordResetEmail(user.getEmail(), user.getFullName(), token);
 
-    return ApiResponse.success("Đã gửi link đặt lại mật khẩu đến email của bạn");
+    return ApiResponse.success("Da gui link dat lai mat khau den email cua ban");
   }
 
-  /**
-   * Reset password with token
-   */
   @Transactional
   public ApiResponse<Void> resetPassword(ResetPasswordRequest request) {
     PasswordResetToken resetToken =
         passwordResetTokenRepository
             .findByTokenAndUsedFalse(request.getToken())
-            .orElseThrow(() -> new BadRequestException("Token không hợp lệ hoặc đã được sử dụng"));
+            .orElseThrow(() -> new BadRequestException("Token khong hop le hoac da duoc su dung"));
 
     if (!resetToken.isValid()) {
-      throw new BadRequestException("Token đã hết hạn");
+      throw new BadRequestException("Token da het han");
     }
 
-    // Update password
     User user = resetToken.getUser();
     user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
     userRepository.save(user);
 
-    // Mark token as used
     resetToken.setUsed(true);
     passwordResetTokenRepository.save(resetToken);
+    loginSessionRepository.deactivateAllSessionsByUser(user);
 
-    return ApiResponse.success("Đặt lại mật khẩu thành công");
+    return ApiResponse.success("Dat lai mat khau thanh cong");
   }
 
-  // === Private helper methods ===
-
-  /**
-   * Logout - stateless JWT, just return success (client clears token)
-   */
-  public ApiResponse<Void> logout() {
-    return ApiResponse.success("Đăng xuất thành công", null);
+  public ApiResponse<Void> logout(User user) {
+    loginSessionRepository.deactivateAllSessionsByUser(user);
+    return ApiResponse.success("Dang xuat thanh cong", null);
   }
 
-  /**
-   * Refresh access token using refresh token
-   */
+  @Transactional
   public ApiResponse<AuthResponse> refreshToken(RefreshTokenRequest request) {
     String refreshToken = request.getRefreshToken();
 
     if (!jwtService.validateToken(refreshToken)) {
-      throw new BadRequestException("Refresh token không hợp lệ hoặc đã hết hạn");
+      throw new BadRequestException("Refresh token khong hop le hoac da het han");
+    }
+
+    if (!"refresh".equalsIgnoreCase(jwtService.extractTokenType(refreshToken))) {
+      throw new BadRequestException("Token cung cap khong phai refresh token");
+    }
+
+    LoginSession loginSession =
+        loginSessionRepository
+            .findByRefreshTokenAndIsActiveTrue(refreshToken)
+            .orElseThrow(() -> new BadRequestException("Refresh token da bi thu hoi hoac khong ton tai"));
+
+    if (!loginSession.isValid()) {
+      loginSession.setIsActive(false);
+      loginSessionRepository.save(loginSession);
+      throw new BadRequestException("Refresh token khong hop le hoac da het han");
     }
 
     String email = jwtService.extractEmail(refreshToken);
     User user =
         userRepository
             .findByEmail(email)
-            .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy người dùng"));
+            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
+
+    if (!loginSession.getUser().getUserId().equals(user.getUserId())) {
+      throw new BadRequestException("Refresh token khong khop voi nguoi dung");
+    }
+
+    loginSession.setIsActive(false);
+    loginSession.setLastAccessedAt(Instant.now());
+    loginSessionRepository.save(loginSession);
 
     AuthResponse authResponse = generateAuthResponse(user);
-    return ApiResponse.success("Làm mới token thành công", authResponse);
+    return ApiResponse.success("Lam moi token thanh cong", authResponse);
   }
 
-  /**
-   * Get current user profile from authenticated user
-   */
   public ApiResponse<AuthResponse.UserInfo> getCurrentUser(User user) {
     AuthResponse.UserInfo userInfo =
         AuthResponse.UserInfo.builder()
@@ -290,7 +279,7 @@ public class AuthService {
             .isEmailVerified(Boolean.TRUE.equals(user.getIsEmailVerified()))
             .build();
 
-    return ApiResponse.success("Lấy thông tin thành công", userInfo);
+    return ApiResponse.success("Lay thong tin thanh cong", userInfo);
   }
 
   private AuthResponse generateAuthResponse(User user) {
@@ -298,14 +287,14 @@ public class AuthService {
         jwtService.generateToken(
             user.getEmail(), user.getRole().getRoleName(), user.getUserId(), user.getFullName());
 
-    String refreshToken =
-        jwtService.generateRefreshToken(user.getEmail(), user.getUserId());
+    String refreshToken = jwtService.generateRefreshToken(user.getEmail(), user.getUserId());
+    persistLoginSession(user, refreshToken);
 
     return AuthResponse.builder()
         .accessToken(accessToken)
         .refreshToken(refreshToken)
         .tokenType("Bearer")
-        .expiresIn(jwtService.getTokenExpiration() / 1000) // Convert to seconds
+        .expiresIn(jwtService.getTokenExpiration() / 1000)
         .user(
             AuthResponse.UserInfo.builder()
                 .userId(user.getUserId())
@@ -316,6 +305,17 @@ public class AuthService {
                 .isEmailVerified(Boolean.TRUE.equals(user.getIsEmailVerified()))
                 .build())
         .build();
+  }
+
+  private void persistLoginSession(User user, String refreshToken) {
+    LoginSession session =
+        LoginSession.builder()
+            .user(user)
+            .refreshToken(refreshToken)
+            .expiredAt(Instant.now().plusMillis(jwtService.getRefreshTokenExpiration()))
+            .lastAccessedAt(Instant.now())
+            .build();
+    loginSessionRepository.save(session);
   }
 
   private void createEmailVerification(User user, String otpCode) {
