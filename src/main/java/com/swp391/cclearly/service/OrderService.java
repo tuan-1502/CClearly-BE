@@ -35,6 +35,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -78,7 +80,7 @@ public class OrderService {
   }
 
   public ApiResponse<OrderResponse> getOrderById(User user, UUID orderId) {
-    Order order = orderRepository.findById(orderId)
+    Order order = orderRepository.findDetailedByOrderId(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!canAccessOrder(user, order)) {
@@ -187,7 +189,7 @@ public class OrderService {
           .order(order)
           .method(method)
           .amount(order.getFinalAmount())
-          .status("COD".equals(method) ? "PENDING" : "COMPLETED")
+          .status("PENDING")
           .payosOrderCode("PAYOS".equals(method) ? "PAYOS-" + orderCode : null)
           .build();
       order.getPayments().add(payment);
@@ -238,7 +240,7 @@ public class OrderService {
     if (request.getVariantId() != null) {
       return item.getVariant() != null
           && request.getVariantId().equals(item.getVariant().getVariantId())
-          && java.util.Objects.equals(
+          && Objects.equals(
               request.getLensVariantId(),
               item.getLensVariant() != null ? item.getLensVariant().getVariantId() : null);
     }
@@ -247,7 +249,7 @@ public class OrderService {
       return item.getVariant() != null
           && item.getVariant().getProduct() != null
           && request.getProductId().equals(item.getVariant().getProduct().getProductId())
-          && java.util.Objects.equals(
+          && Objects.equals(
               request.getLensVariantId(),
               item.getLensVariant() != null ? item.getLensVariant().getVariantId() : null);
     }
@@ -320,21 +322,25 @@ public class OrderService {
   private String generateOrderCode(boolean hasPreorder) {
     String typePrefix = hasPreorder ? "PRE" : "ORD";
     String datePart = LocalDate.now().format(ORDER_CODE_DATE_FORMAT);
-    String codePrefix = typePrefix + "-" + datePart;
-
-    long baseSeq = orderRepository.countByCodeStartingWith(codePrefix) + 1;
-    long seq = Math.max(baseSeq, 1);
-
-    String code = codePrefix + String.format("%03d", seq);
+    String codePrefix = typePrefix + "-" + datePart + "-";
+    String code = codePrefix + randomAlphaNumeric(8);
     while (orderRepository.existsByCode(code)) {
-      seq++;
-      code = codePrefix + String.format("%03d", seq);
+      code = codePrefix + randomAlphaNumeric(8);
     }
     return code;
   }
 
+  private String randomAlphaNumeric(int length) {
+    final String chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    StringBuilder builder = new StringBuilder(length);
+    for (int i = 0; i < length; i++) {
+      builder.append(chars.charAt(ThreadLocalRandom.current().nextInt(chars.length())));
+    }
+    return builder.toString();
+  }
+
   public ApiResponse<Void> cancelOrder(User user, UUID orderId) {
-    Order order = orderRepository.findById(orderId)
+    Order order = orderRepository.findDetailedByOrderId(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!order.getUser().getUserId().equals(user.getUserId())) {
@@ -353,7 +359,7 @@ public class OrderService {
   }
 
   public ApiResponse<Void> updateOrderStatus(UUID orderId, String status) {
-    Order order = orderRepository.findById(orderId)
+    Order order = orderRepository.findDetailedByOrderId(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
     String newStatus = normalizeOrderStatus(status);
     if (!"CANCELLED".equals(order.getStatus()) && "CANCELLED".equals(newStatus)) {
@@ -368,7 +374,7 @@ public class OrderService {
    * Cập nhật trạng thái đơn hàng kèm ghi chú (tracking number, notes...)
    */
   public ApiResponse<Void> updateOrderStatusWithNote(UUID orderId, String status, String note) {
-    Order order = orderRepository.findById(orderId)
+    Order order = orderRepository.findDetailedByOrderId(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
     String newStatus = normalizeOrderStatus(status);
     if (!"CANCELLED".equals(order.getStatus()) && "CANCELLED".equals(newStatus)) {
@@ -403,7 +409,7 @@ public class OrderService {
    * FE gửi: rightEye(sph/cyl/axis/add), leftEye(sph/cyl/axis/add), pd, imageUrl
    */
   public ApiResponse<Void> savePrescription(User user, UUID orderId, SavePrescriptionRequest request) {
-    Order order = orderRepository.findById(orderId)
+    Order order = orderRepository.findDetailedByOrderId(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!canAccessOrder(user, order)) {
@@ -507,7 +513,7 @@ public class OrderService {
 
   // Customer: request return/refund
   public ApiResponse<Void> requestReturn(User user, UUID orderId, ReturnRequest request) {
-    Order order = orderRepository.findById(orderId)
+    Order order = orderRepository.findDetailedByOrderId(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!order.getUser().getUserId().equals(user.getUserId())) {
