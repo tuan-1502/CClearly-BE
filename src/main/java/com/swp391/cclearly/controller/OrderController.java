@@ -50,7 +50,7 @@ public class OrderController {
   @PostMapping
   public ResponseEntity<ApiResponse<OrderResponse>> createOrder(
       @AuthenticationPrincipal User user,
-      @Valid @RequestBody CreateOrderRequest request) {
+      @RequestBody CreateOrderRequest request) {
     return ResponseEntity.ok(orderService.createOrder(user, request));
   }
 

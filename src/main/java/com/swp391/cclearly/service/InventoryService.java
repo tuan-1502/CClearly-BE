@@ -39,13 +39,10 @@ public class InventoryService {
   private final AuditLogService auditLogService;
 
   public ApiResponse<List<InventoryResponse>> getInventory(String search, UUID warehouseId) {
-    List<InventoryStock> allStocks = warehouseId == null
-        ? inventoryStockRepository.findAll()
-        : inventoryStockRepository.findAll().stream()
-            .filter(stock -> stock.getWarehouse().getWarehouseId().equals(warehouseId))
-            .toList();
+    List<InventoryStock> allStocks = inventoryStockRepository.findAll();
 
     Map<UUID, List<InventoryStock>> grouped = allStocks.stream()
+        .filter(stock -> warehouseId == null || stock.getWarehouse().getWarehouseId().equals(warehouseId))
         .collect(Collectors.groupingBy(stock -> stock.getVariant().getVariantId()));
 
     List<InventoryResponse> response = new ArrayList<>();
@@ -104,7 +101,9 @@ public class InventoryService {
         continue;
       }
 
-      List<InventoryStock> stocks = inventoryStockRepository.findByVariantIdForUpdate(entry.getKey());
+      List<InventoryStock> stocks = inventoryStockRepository.findByVariant_VariantId(entry.getKey()).stream()
+          .sorted(Comparator.comparing(stock -> stock.getWarehouse().getName()))
+          .collect(Collectors.toList());
 
       int available = stocks.stream()
           .mapToInt(stock -> stock.getQuantityOnHand() != null ? stock.getQuantityOnHand() : 0)
@@ -147,7 +146,9 @@ public class InventoryService {
         continue;
       }
 
-      List<InventoryStock> stocks = inventoryStockRepository.findByVariantIdForUpdate(entry.getKey());
+      List<InventoryStock> stocks = inventoryStockRepository.findByVariant_VariantId(entry.getKey()).stream()
+          .sorted(Comparator.comparing(stock -> stock.getWarehouse().getName()))
+          .collect(Collectors.toList());
 
       InventoryStock stock = stocks.stream().findFirst()
           .orElseGet(() -> createStockForVariant(variant));
@@ -182,7 +183,9 @@ public class InventoryService {
 
     recordStockMovement(variant, request.getQuantity(), request.getReason() != null ? request.getReason() : "IMPORT");
 
-    List<InventoryStock> variantStocks = inventoryStockRepository.findByVariant_VariantId(variant.getVariantId());
+    List<InventoryStock> variantStocks = inventoryStockRepository.findAll().stream()
+        .filter(s -> s.getVariant().getVariantId().equals(variant.getVariantId()))
+        .collect(Collectors.toList());
 
     int totalStock = variantStocks.stream()
         .mapToInt(s -> s.getQuantityOnHand() != null ? s.getQuantityOnHand() : 0)

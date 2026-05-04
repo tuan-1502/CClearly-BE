@@ -25,6 +25,8 @@ import com.swp391.cclearly.repository.AddressRepository;
 import com.swp391.cclearly.repository.CartRepository;
 import com.swp391.cclearly.repository.OrderItemRepository;
 import com.swp391.cclearly.repository.OrderRepository;
+import com.swp391.cclearly.repository.ProductRepository;
+import com.swp391.cclearly.repository.ProductVariantRepository;
 import com.swp391.cclearly.repository.RefundRepository;
 import com.swp391.cclearly.repository.SystemConfigRepository;
 import java.math.BigDecimal;
@@ -35,8 +37,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -72,6 +72,8 @@ public class OrderService {
   private final InventoryService inventoryService;
   private final PromotionValidationService promotionValidationService;
   private final CartService cartService;
+  private final ProductVariantRepository productVariantRepository;
+  private final ProductRepository productRepository;
 
   public ApiResponse<List<OrderResponse>> getUserOrders(User user) {
     List<Order> orders = orderRepository.findByUserOrderByOrderIdDesc(user);
@@ -80,7 +82,7 @@ public class OrderService {
   }
 
   public ApiResponse<OrderResponse> getOrderById(User user, UUID orderId) {
-    Order order = orderRepository.findDetailedByOrderId(orderId)
+    Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!canAccessOrder(user, order)) {
@@ -99,11 +101,23 @@ public class OrderService {
     }
 
     Address address = resolveCheckoutAddress(user, request);
-    List<com.swp391.cclearly.entity.CartItem> selectedCartItems = resolveSelectedCartItems(cart, request);
+    List<CartItem> selectedCartItems = resolveSelectedCartItems(cart, request);
 
+    Order order = createOrderInternal(user, address, selectedCartItems, request.getCouponCode(),
+        request.getPaymentMethod(), request.getPaymentType());
+
+    // Remove only ordered items from cart.
+    cart.getCartItems().removeAll(selectedCartItems);
+    cartRepository.save(cart);
+
+    return ApiResponse.success("Đặt hàng thành công", toResponse(order));
+  }
+
+  private Order createOrderInternal(User user, Address address, List<CartItem> selectedCartItems, String couponCode,
+      String paymentMethod, String paymentType) {
     // Check if any cart item is a preorder variant
     boolean hasPreorder = selectedCartItems.stream()
-        .anyMatch(ci -> Boolean.TRUE.equals(ci.getVariant().getIsPreorder()));
+        .anyMatch(ci -> ci.getVariant() != null && Boolean.TRUE.equals(ci.getVariant().getIsPreorder()));
     String orderCode = generateOrderCode(hasPreorder);
 
     Order order = Order.builder()
@@ -116,10 +130,9 @@ public class OrderService {
         .paymentType(hasPreorder ? "DEPOSIT" : null)
         .build();
 
-    // Build order items from cart — always use full price
+    // Build order items
     List<OrderItem> orderItems = new ArrayList<>();
     BigDecimal total = BigDecimal.ZERO;
-    BigDecimal preorderTotal = BigDecimal.ZERO;
 
     for (var cartItem : selectedCartItems) {
       ProductVariant v = cartItem.getVariant();
@@ -127,10 +140,6 @@ public class OrderService {
       int quantity = cartItem.getQuantity() != null ? cartItem.getQuantity() : 1;
       BigDecimal lineTotal = price.multiply(BigDecimal.valueOf(quantity));
       total = total.add(lineTotal);
-
-      if (Boolean.TRUE.equals(v.getIsPreorder())) {
-        preorderTotal = preorderTotal.add(lineTotal);
-      }
 
       OrderItem oi = OrderItem.builder()
           .order(order)
@@ -154,14 +163,15 @@ public class OrderService {
         .orElse(new BigDecimal("500000"));
 
     BigDecimal shippingFee = total.compareTo(freeShippingThreshold) >= 0
-        ? BigDecimal.ZERO : defaultShippingFee;
+        ? BigDecimal.ZERO
+        : defaultShippingFee;
     order.setShippingFee(shippingFee);
 
     // Apply coupon if provided
     BigDecimal discountAmount = BigDecimal.ZERO;
-    if (request.getCouponCode() != null && !request.getCouponCode().isBlank()) {
-      PromotionValidationService.AppliedPromotion appliedPromotion =
-          promotionValidationService.validate(request.getCouponCode(), total);
+    if (couponCode != null && !couponCode.isBlank()) {
+      PromotionValidationService.AppliedPromotion appliedPromotion = promotionValidationService
+          .validate(couponCode, total);
       discountAmount = appliedPromotion.discountAmount();
       order.setCoupon(appliedPromotion.promotion());
       order.setDiscountAmount(discountAmount);
@@ -174,7 +184,6 @@ public class OrderService {
 
     // Create Payment records
     if (hasPreorder) {
-      // Preorder: full COD payment (online payment gateway not yet available)
       Payment codPayment = Payment.builder()
           .order(order)
           .method("COD")
@@ -183,64 +192,71 @@ public class OrderService {
           .build();
       order.getPayments().add(codPayment);
     } else {
-      // Non-preorder: single payment
-      String method = normalizePaymentMethod(request.getPaymentMethod());
+      String method = normalizePaymentMethod(paymentMethod);
       Payment payment = Payment.builder()
           .order(order)
           .method(method)
           .amount(order.getFinalAmount())
-          .status("PENDING")
+          .status("COD".equals(method) ? "PENDING" : "COMPLETED")
           .payosOrderCode("PAYOS".equals(method) ? "PAYOS-" + orderCode : null)
           .build();
       order.getPayments().add(payment);
     }
-    order = orderRepository.save(order);
-
-    // Remove only ordered items from cart.
-    cart.getCartItems().removeAll(selectedCartItems);
-    cartRepository.save(cart);
-
-    return ApiResponse.success("Đặt hàng thành công", toResponse(order));
+    return orderRepository.save(order);
   }
 
   public ApiResponse<OrderResponse> createOrderBuyNow(User user, BuyNowOrderRequest request) {
-    AddCartItemRequest addCartItemRequest = new AddCartItemRequest();
-    addCartItemRequest.setVariantId(request.getVariantId());
-    addCartItemRequest.setProductId(request.getProductId());
-    addCartItemRequest.setLensVariantId(request.getLensVariantId());
-    addCartItemRequest.setQuantity(request.getQuantity() != null ? request.getQuantity() : 1);
-
-    cartService.addToCart(user, addCartItemRequest);
-    Cart cart = cartRepository.findByUser(user)
-        .orElseThrow(() -> new BadRequestException("Giỏ hàng trống"));
-    UUID selectedCartItemId = cart.getCartItems().stream()
-        .filter(item -> isBuyNowTarget(item, request))
-        .map(CartItem::getCartItemId)
-        .findFirst()
-        .orElse(null);
-
-    CreateOrderRequest createOrderRequest = new CreateOrderRequest();
-    createOrderRequest.setRecipientName(request.getRecipientName());
-    createOrderRequest.setPhone(request.getPhone());
-    createOrderRequest.setStreet(request.getStreet());
-    createOrderRequest.setCity(request.getCity());
-    createOrderRequest.setNotes(request.getNotes());
-    createOrderRequest.setAddressId(request.getAddressId());
-    createOrderRequest.setPaymentMethod(request.getPaymentMethod());
-    createOrderRequest.setPaymentType(request.getPaymentType());
-    createOrderRequest.setCouponCode(request.getCouponCode());
-    if (selectedCartItemId != null) {
-      createOrderRequest.setCartItemIds(List.of(selectedCartItemId));
+    // Resolve variant
+    ProductVariant variant;
+    if (request.getVariantId() != null) {
+      variant = productVariantRepository.findById(request.getVariantId())
+          .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy sản phẩm"));
+    } else if (request.getProductId() != null) {
+      List<ProductVariant> variants = productVariantRepository.findByProduct_ProductId(request.getProductId());
+      if (variants.isEmpty())
+        throw new ResourceNotFoundException("Sản phẩm chưa có biến thể");
+      variant = variants.get(0);
+    } else {
+      throw new BadRequestException("Vui lòng chọn sản phẩm");
     }
 
-    return createOrder(user, createOrderRequest);
+    // Resolve lens variant
+    ProductVariant lensVariant = null;
+    if (request.getLensVariantId() != null) {
+      lensVariant = productVariantRepository.findById(request.getLensVariantId())
+          .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy tròng kính"));
+    }
+
+    // Create transient cart item (DO NOT SAVE TO DB)
+    CartItem transientItem = CartItem.builder()
+        .variant(variant)
+        .lensVariant(lensVariant)
+        .quantity(request.getQuantity() != null ? request.getQuantity() : 1)
+        .build();
+
+    Address address = resolveCheckoutAddress(user, new CreateOrderRequest(
+        request.getRecipientName(),
+        request.getPhone(),
+        request.getStreet(),
+        request.getCity(),
+        request.getNotes(),
+        request.getAddressId(),
+        request.getPaymentMethod(),
+        request.getPaymentType(),
+        request.getCouponCode(),
+        null));
+
+    Order order = createOrderInternal(user, address, List.of(transientItem), request.getCouponCode(),
+        request.getPaymentMethod(), request.getPaymentType());
+
+    return ApiResponse.success("Đặt hàng thành công", toResponse(order));
   }
 
   private boolean isBuyNowTarget(CartItem item, BuyNowOrderRequest request) {
     if (request.getVariantId() != null) {
       return item.getVariant() != null
           && request.getVariantId().equals(item.getVariant().getVariantId())
-          && Objects.equals(
+          && java.util.Objects.equals(
               request.getLensVariantId(),
               item.getLensVariant() != null ? item.getLensVariant().getVariantId() : null);
     }
@@ -249,7 +265,7 @@ public class OrderService {
       return item.getVariant() != null
           && item.getVariant().getProduct() != null
           && request.getProductId().equals(item.getVariant().getProduct().getProductId())
-          && Objects.equals(
+          && java.util.Objects.equals(
               request.getLensVariantId(),
               item.getLensVariant() != null ? item.getLensVariant().getVariantId() : null);
     }
@@ -322,25 +338,21 @@ public class OrderService {
   private String generateOrderCode(boolean hasPreorder) {
     String typePrefix = hasPreorder ? "PRE" : "ORD";
     String datePart = LocalDate.now().format(ORDER_CODE_DATE_FORMAT);
-    String codePrefix = typePrefix + "-" + datePart + "-";
-    String code = codePrefix + randomAlphaNumeric(8);
+    String codePrefix = typePrefix + "-" + datePart;
+
+    long baseSeq = orderRepository.countByCodeStartingWith(codePrefix) + 1;
+    long seq = Math.max(baseSeq, 1);
+
+    String code = codePrefix + String.format("%03d", seq);
     while (orderRepository.existsByCode(code)) {
-      code = codePrefix + randomAlphaNumeric(8);
+      seq++;
+      code = codePrefix + String.format("%03d", seq);
     }
     return code;
   }
 
-  private String randomAlphaNumeric(int length) {
-    final String chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    StringBuilder builder = new StringBuilder(length);
-    for (int i = 0; i < length; i++) {
-      builder.append(chars.charAt(ThreadLocalRandom.current().nextInt(chars.length())));
-    }
-    return builder.toString();
-  }
-
   public ApiResponse<Void> cancelOrder(User user, UUID orderId) {
-    Order order = orderRepository.findDetailedByOrderId(orderId)
+    Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!order.getUser().getUserId().equals(user.getUserId())) {
@@ -359,7 +371,7 @@ public class OrderService {
   }
 
   public ApiResponse<Void> updateOrderStatus(UUID orderId, String status) {
-    Order order = orderRepository.findDetailedByOrderId(orderId)
+    Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
     String newStatus = normalizeOrderStatus(status);
     if (!"CANCELLED".equals(order.getStatus()) && "CANCELLED".equals(newStatus)) {
@@ -374,7 +386,7 @@ public class OrderService {
    * Cập nhật trạng thái đơn hàng kèm ghi chú (tracking number, notes...)
    */
   public ApiResponse<Void> updateOrderStatusWithNote(UUID orderId, String status, String note) {
-    Order order = orderRepository.findDetailedByOrderId(orderId)
+    Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
     String newStatus = normalizeOrderStatus(status);
     if (!"CANCELLED".equals(order.getStatus()) && "CANCELLED".equals(newStatus)) {
@@ -409,7 +421,7 @@ public class OrderService {
    * FE gửi: rightEye(sph/cyl/axis/add), leftEye(sph/cyl/axis/add), pd, imageUrl
    */
   public ApiResponse<Void> savePrescription(User user, UUID orderId, SavePrescriptionRequest request) {
-    Order order = orderRepository.findDetailedByOrderId(orderId)
+    Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!canAccessOrder(user, order)) {
@@ -449,17 +461,28 @@ public class OrderService {
           .build();
       targetItem.setPrescription(prescription);
     } else {
-      if (request.getSphOd() != null) prescription.setSphOd(request.getSphOd());
-      if (request.getCylOd() != null) prescription.setCylOd(request.getCylOd());
-      if (request.getAxisOd() != null) prescription.setAxisOd(request.getAxisOd());
-      if (request.getAddOd() != null) prescription.setAddOd(request.getAddOd());
-      if (request.getSphOs() != null) prescription.setSphOs(request.getSphOs());
-      if (request.getCylOs() != null) prescription.setCylOs(request.getCylOs());
-      if (request.getAxisOs() != null) prescription.setAxisOs(request.getAxisOs());
-      if (request.getAddOs() != null) prescription.setAddOs(request.getAddOs());
-      if (request.getPd() != null) prescription.setPd(request.getPd());
-      if (request.getImageUrl() != null) prescription.setImageUrl(request.getImageUrl());
-      if (request.getSalesNote() != null) prescription.setSalesNote(request.getSalesNote());
+      if (request.getSphOd() != null)
+        prescription.setSphOd(request.getSphOd());
+      if (request.getCylOd() != null)
+        prescription.setCylOd(request.getCylOd());
+      if (request.getAxisOd() != null)
+        prescription.setAxisOd(request.getAxisOd());
+      if (request.getAddOd() != null)
+        prescription.setAddOd(request.getAddOd());
+      if (request.getSphOs() != null)
+        prescription.setSphOs(request.getSphOs());
+      if (request.getCylOs() != null)
+        prescription.setCylOs(request.getCylOs());
+      if (request.getAxisOs() != null)
+        prescription.setAxisOs(request.getAxisOs());
+      if (request.getAddOs() != null)
+        prescription.setAddOs(request.getAddOs());
+      if (request.getPd() != null)
+        prescription.setPd(request.getPd());
+      if (request.getImageUrl() != null)
+        prescription.setImageUrl(request.getImageUrl());
+      if (request.getSalesNote() != null)
+        prescription.setSalesNote(request.getSalesNote());
     }
 
     orderItemRepository.save(targetItem);
@@ -513,7 +536,7 @@ public class OrderService {
 
   // Customer: request return/refund
   public ApiResponse<Void> requestReturn(User user, UUID orderId, ReturnRequest request) {
-    Order order = orderRepository.findDetailedByOrderId(orderId)
+    Order order = orderRepository.findById(orderId)
         .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy đơn hàng"));
 
     if (!order.getUser().getUserId().equals(user.getUserId())) {
@@ -543,10 +566,38 @@ public class OrderService {
     List<OrderResponse.OrderItemResponse> items = o.getOrderItems().stream()
         .map(oi -> {
           ProductVariant v = oi.getVariant();
-          String imageUrl = v.getImages().stream()
-              .map(ProductImage::getImageUrl)
-              .findFirst()
-              .orElse(null);
+          String imageUrl = null;
+          if (v.getImages() != null) {
+            imageUrl = v.getImages().stream()
+                .map(ProductImage::getImageUrl)
+                .filter(url -> url != null && !url.isBlank())
+                .findFirst()
+                .orElse(null);
+          }
+          if (imageUrl == null && v.getProduct() != null && v.getProduct().getImages() != null) {
+            imageUrl = v.getProduct().getImages().stream()
+                .map(ProductImage::getImageUrl)
+                .filter(url -> url != null && !url.isBlank())
+                .findFirst()
+                .orElse(null);
+          }
+          if (imageUrl == null && oi.getLensVariant() != null) {
+            ProductVariant lens = oi.getLensVariant();
+            if (lens.getImages() != null) {
+              imageUrl = lens.getImages().stream()
+                  .map(ProductImage::getImageUrl)
+                  .filter(url -> url != null && !url.isBlank())
+                  .findFirst()
+                  .orElse(null);
+            }
+            if (imageUrl == null && lens.getProduct() != null && lens.getProduct().getImages() != null) {
+              imageUrl = lens.getProduct().getImages().stream()
+                  .map(ProductImage::getImageUrl)
+                  .filter(url -> url != null && !url.isBlank())
+                  .findFirst()
+                  .orElse(null);
+            }
+          }
           // Determine product type
           String productType = v.getProduct().getCategoryType();
 

@@ -20,7 +20,6 @@ import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -37,7 +36,6 @@ public class UserController {
 
   @Operation(summary = "Lấy danh sách khách hàng")
   @GetMapping("/customers")
-  @PreAuthorize("hasAnyRole('ADMIN', 'MANAGER')")
   public ResponseEntity<ApiResponse<List<AdminUserResponse>>> getCustomers() {
     return ResponseEntity.ok(userService.getCustomers());
   }
@@ -53,7 +51,7 @@ public class UserController {
   @PatchMapping("/profile")
   public ResponseEntity<ApiResponse<UserProfileResponse>> updateProfile(
       @AuthenticationPrincipal User user,
-      @Valid @RequestBody UpdateProfileRequest request) {
+      @RequestBody UpdateProfileRequest request) {
     return ResponseEntity.ok(userService.updateProfile(user, request));
   }
 

@@ -40,7 +40,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,7 +70,10 @@ public class AdminService {
 
     // Total revenue from delivered orders
     ZoneId zoneId = ZoneId.of("Asia/Ho_Chi_Minh");
-    List<Order> deliveredOrderList = orderRepository.findByStatus("DELIVERED");
+    List<Order> allOrders = orderRepository.findAll();
+    List<Order> deliveredOrderList = allOrders.stream()
+        .filter(o -> "DELIVERED".equals(o.getStatus()))
+        .collect(Collectors.toList());
 
     BigDecimal totalRevenue = deliveredOrderList.stream()
         .map(Order::getFinalAmount)
@@ -163,13 +165,32 @@ public class AdminService {
 
   public ApiResponse<List<AdminUserResponse>> getAllUsers(
       String search, String role, int page, int size) {
-    int safePage = Math.max(page - 1, 0);
-    int safeSize = Math.max(size, 1);
-    Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
-    Page<User> userPage = userRepository.searchUsers(search, role, pageable);
-    List<AdminUserResponse> response = userPage.getContent().stream()
-        .map(this::toAdminUserResponse)
+    List<User> allUsers = userRepository.findAll();
+
+    // Filter
+    List<User> filtered = allUsers.stream()
+        .filter(u -> {
+          if (search != null && !search.isBlank()) {
+            String q = search.toLowerCase();
+            return (u.getFullName() != null && u.getFullName().toLowerCase().contains(q))
+                || (u.getEmail() != null && u.getEmail().toLowerCase().contains(q));
+          }
+          return true;
+        })
+        .filter(u -> {
+          if (role != null && !role.isBlank()) {
+            return u.getRole() != null && role.equalsIgnoreCase(u.getRole().getRoleName());
+          }
+          return true;
+        })
         .collect(Collectors.toList());
+
+    // Paginate manually
+    int start = (page - 1) * size;
+    int end = Math.min(start + size, filtered.size());
+    List<AdminUserResponse> response = (start < filtered.size())
+        ? filtered.subList(start, end).stream().map(this::toAdminUserResponse).collect(Collectors.toList())
+        : new ArrayList<>();
 
     return ApiResponse.success("Lấy danh sách người dùng thành công", response);
   }
@@ -196,7 +217,9 @@ public class AdminService {
 
   public ApiResponse<RevenueResponse> getRevenue(int days) {
     ZoneId zoneId = ZoneId.of("Asia/Ho_Chi_Minh");
-    List<Order> deliveredOrders = orderRepository.findByStatus("DELIVERED");
+    List<Order> deliveredOrders = orderRepository.findAll().stream()
+        .filter(o -> "DELIVERED".equals(o.getStatus()))
+        .collect(Collectors.toList());
 
     BigDecimal totalRevenue = deliveredOrders.stream()
         .map(Order::getFinalAmount)

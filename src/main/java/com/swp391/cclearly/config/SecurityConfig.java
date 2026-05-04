@@ -17,7 +17,6 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.web.cors.CorsConfigurationSource;
 
 @Configuration
 @EnableWebSecurity
@@ -28,13 +27,19 @@ public class SecurityConfig {
   private final JwtAuthenticationFilter jwtAuthenticationFilter;
   private final CustomAccessDeniedHandler customAccessDeniedHandler;
   private final CustomAuthenticationEntryPoint customAuthenticationEntryPoint;
-  private final CorsConfigurationSource corsConfigurationSource;
 
   @Bean
   public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
     return http
         .csrf(AbstractHttpConfigurer::disable)
-        .cors(cors -> cors.configurationSource(corsConfigurationSource))
+        .cors(cors -> cors.configurationSource(request -> {
+          var corsConfig = new org.springframework.web.cors.CorsConfiguration();
+          corsConfig.addAllowedOriginPattern("*");
+          corsConfig.addAllowedMethod("*");
+          corsConfig.addAllowedHeader("*");
+          corsConfig.setAllowCredentials(true);
+          return corsConfig;
+        }))
         .authorizeHttpRequests(auth -> auth
             // 🔒 Auth endpoints that require authentication
             .requestMatchers(HttpMethod.GET, "/api/auth/me").authenticated()
@@ -93,7 +98,6 @@ public class SecurityConfig {
             .requestMatchers("/api/banners/**").hasAnyRole("ADMIN", "MANAGER")
 
             // 🔒 Customer endpoints
-            .requestMatchers(HttpMethod.GET, "/api/users/customers").hasAnyRole("ADMIN", "MANAGER")
             .requestMatchers("/api/users/**").hasAnyRole("CUSTOMER", "ADMIN", "MANAGER", "SALES_STAFF", "OPERATION_STAFF")
             .requestMatchers(HttpMethod.GET, "/api/orders/admin/**")
                 .hasAnyRole("ADMIN", "MANAGER", "SALES_STAFF", "OPERATION_STAFF")
