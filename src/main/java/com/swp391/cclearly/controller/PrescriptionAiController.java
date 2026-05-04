@@ -11,6 +11,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/prescription-ai")
 @RequiredArgsConstructor
@@ -25,5 +27,14 @@ public class PrescriptionAiController {
             @RequestParam("file") MultipartFile file) {
         PrescriptionAiResponse data = geminiService.extractPrescription(file);
         return ResponseEntity.ok(ApiResponse.success("Trích xuất thông số thành công", data));
+    }
+
+    @Operation(summary = "Trình trợ lý AI: Gợi ý thông số đơn kính từ mô tả văn bản")
+    @PostMapping("/chat")
+    public ResponseEntity<ApiResponse<PrescriptionAiResponse>> chatPrescription(
+            @RequestBody Map<String, String> request) {
+        String message = request.get("message");
+        PrescriptionAiResponse data = geminiService.chatPrescription(message);
+        return ResponseEntity.ok(ApiResponse.success("AI đã phân tích xong", data));
     }
 }

@@ -77,4 +77,36 @@ public class GeminiService {
             throw new RuntimeException("Lỗi AI (2.5): " + errorMsg);
         }
     }
+
+    public PrescriptionAiResponse chatPrescription(String userMessage) {
+        try {
+            String prompt = "You are a professional optometrist assistant. A customer is describing their eye condition.\n" +
+                    "Extract or suggest potential values. Return ONLY JSON.\n" +
+                    "Fields: od_sph, od_cyl, od_axs, od_add, os_sph, os_cyl, os_axs, os_add, pd, note.\n" +
+                    "Vietnamese advice in 'note'.\n" +
+                    "Message: " + userMessage;
+
+            Map<String, Object> requestBody = Map.of(
+                "contents", List.of(
+                    Map.of("parts", List.of(Map.of("text", prompt)))
+                )
+            );
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+            String url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=" + geminiApiKey.trim();
+            String response = restTemplate.postForObject(url, entity, String.class);
+            
+            JsonNode root = objectMapper.readTree(response);
+            String aiText = root.path("candidates").get(0).path("content").path("parts").get(0).path("text").asText();
+            String jsonStr = aiText.replaceAll("```json", "").replaceAll("```", "").trim();
+
+            return objectMapper.readValue(jsonStr, PrescriptionAiResponse.class);
+        } catch (Exception e) {
+            log.error("Gemini Chat Error: {}", e.getMessage());
+            throw new RuntimeException("Lỗi Chat AI: " + e.getMessage());
+        }
+    }
 }
