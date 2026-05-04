@@ -5,8 +5,6 @@ import com.swp391.cclearly.dto.address.AddressResponse;
 import com.swp391.cclearly.dto.base.ApiResponse;
 import com.swp391.cclearly.entity.Address;
 import com.swp391.cclearly.entity.User;
-import com.swp391.cclearly.exception.BadRequestException;
-import com.swp391.cclearly.exception.ResourceNotFoundException;
 import com.swp391.cclearly.repository.AddressRepository;
 import java.util.List;
 import java.util.UUID;
@@ -54,10 +52,10 @@ public class AddressService {
 
     public ApiResponse<AddressResponse> updateAddress(User user, UUID addressId, AddressRequest request) {
         Address address = addressRepository.findById(addressId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy địa chỉ"));
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy địa chỉ"));
 
         if (!address.getUser().getUserId().equals(user.getUserId())) {
-            throw new BadRequestException("Bạn không có quyền cập nhật địa chỉ này");
+            throw new RuntimeException("Bạn không có quyền cập nhật địa chỉ này");
         }
 
         if (Boolean.TRUE.equals(request.getIsDefault())) {
@@ -75,10 +73,10 @@ public class AddressService {
 
     public ApiResponse<Void> deleteAddress(User user, UUID addressId) {
         Address address = addressRepository.findById(addressId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy địa chỉ"));
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy địa chỉ"));
 
         if (!address.getUser().getUserId().equals(user.getUserId())) {
-            throw new BadRequestException("Bạn không có quyền xóa địa chỉ này");
+            throw new RuntimeException("Bạn không có quyền xóa địa chỉ này");
         }
 
         boolean wasDefault = Boolean.TRUE.equals(address.getIsDefault());
@@ -98,10 +96,10 @@ public class AddressService {
 
     public ApiResponse<AddressResponse> setDefault(User user, UUID addressId) {
         Address address = addressRepository.findById(addressId)
-                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy địa chỉ"));
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy địa chỉ"));
 
         if (!address.getUser().getUserId().equals(user.getUserId())) {
-            throw new BadRequestException("Bạn không có quyền thay đổi địa chỉ này");
+            throw new RuntimeException("Bạn không có quyền thay đổi địa chỉ này");
         }
 
         unsetDefaultAddresses(user);

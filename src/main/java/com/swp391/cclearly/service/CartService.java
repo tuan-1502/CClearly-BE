@@ -179,12 +179,37 @@ public class CartService {
         .map(ci -> {
           ProductVariant v = ci.getVariant();
           ProductVariant lens = ci.getLensVariant();
-          String imageUrl = v.getImages() != null
-              ? v.getImages().stream()
+          String imageUrl = null;
+          if (v.getImages() != null) {
+            imageUrl = v.getImages().stream()
+                .map(ProductImage::getImageUrl)
+                .filter(url -> url != null && !url.isBlank())
+                .findFirst()
+                .orElse(null);
+          }
+          if (imageUrl == null && v.getProduct() != null && v.getProduct().getImages() != null) {
+            imageUrl = v.getProduct().getImages().stream()
+                .map(ProductImage::getImageUrl)
+                .filter(url -> url != null && !url.isBlank())
+                .findFirst()
+                .orElse(null);
+          }
+          if (imageUrl == null && lens != null) {
+            if (lens.getImages() != null) {
+              imageUrl = lens.getImages().stream()
                   .map(ProductImage::getImageUrl)
+                  .filter(url -> url != null && !url.isBlank())
                   .findFirst()
-                  .orElse(null)
-              : null;
+                  .orElse(null);
+            }
+            if (imageUrl == null && lens.getProduct() != null && lens.getProduct().getImages() != null) {
+              imageUrl = lens.getProduct().getImages().stream()
+                  .map(ProductImage::getImageUrl)
+                  .filter(url -> url != null && !url.isBlank())
+                  .findFirst()
+                  .orElse(null);
+            }
+          }
 
           return CartResponse.CartItemResponse.builder()
               .cartItemId(ci.getCartItemId())
