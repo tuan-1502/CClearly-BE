@@ -29,4 +29,8 @@ public class InventoryStock {
 
   @Column(name = "location_code", length = 255)
   private String locationCode;
+
+  @Version
+  @Column(name = "version")
+  private Long version;
 }

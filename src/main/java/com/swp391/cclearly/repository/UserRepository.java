@@ -1,6 +1,8 @@
 package com.swp391.cclearly.repository;
 
 import com.swp391.cclearly.entity.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -24,4 +26,14 @@ public interface UserRepository extends JpaRepository<User, UUID> {
   Optional<UserDetails> findUserDetailsByEmail(String email);
 
   List<User> findByRole_RoleName(String roleName);
+
+  @Query("""
+      SELECT u FROM User u
+      LEFT JOIN u.role r
+      WHERE (:search IS NULL OR :search = '' OR
+             LOWER(COALESCE(u.fullName, '')) LIKE LOWER(CONCAT('%', :search, '%')) OR
+             LOWER(COALESCE(u.email, '')) LIKE LOWER(CONCAT('%', :search, '%')))
+        AND (:role IS NULL OR :role = '' OR UPPER(r.roleName) = UPPER(:role))
+      """)
+  Page<User> searchUsers(String search, String role, Pageable pageable);
 }

@@ -2,26 +2,30 @@ package com.swp391.cclearly.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Configuration
 public class CorsConfig {
 
+    @Value("${app.cors.allowed-origins}")
+    private String allowedOrigins;
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        
-        // Cho phép React Vite frontend (mặc định chạy trên port 5173)
-        configuration.setAllowedOrigins(Arrays.asList(
-            "http://localhost:5173",  // Vite dev server
-            "http://localhost:3000",  // Có thể dùng port khác
-            "http://127.0.0.1:5173"
-        ));
+
+        List<String> origins = Arrays.stream(allowedOrigins.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .collect(Collectors.toList());
+        configuration.setAllowedOrigins(origins);
         
         // Cho phép tất cả HTTP methods
         configuration.setAllowedMethods(Arrays.asList(

@@ -11,7 +11,11 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 
 @Entity
-@Table(name = "Orders")
+@Table(
+    name = "Orders",
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uk_orders_code", columnNames = {"code"})
+    })
 @Getter
 @Setter
 @NoArgsConstructor
@@ -28,7 +32,7 @@ public class Order {
   @JoinColumn(name = "user_id")
   private User user;
 
-  @Column(name = "code", length = 20)
+  @Column(name = "code", length = 32, nullable = false)
   private String code;
 
   @Column(name = "status", length = 50)
