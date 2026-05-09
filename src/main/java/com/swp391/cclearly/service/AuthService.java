@@ -74,22 +74,20 @@ public class AuthService {
       throw new BadRequestException("So dien thoai da duoc su dung");
     }
 
-    Role customerRole =
-        roleRepository
-            .findByRoleName(DEFAULT_ROLE)
-            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay role CUSTOMER"));
+    Role customerRole = roleRepository
+        .findByRoleName(DEFAULT_ROLE)
+        .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay role CUSTOMER"));
 
-    User user =
-        User.builder()
-            .email(request.getEmail())
-            .passwordHash(passwordEncoder.encode(request.getPassword()))
-            .fullName(request.getFullName())
-            .phoneNumber(request.getPhoneNumber())
-            .role(customerRole)
-            .status(USER_STATUS_PENDING)
-            .isEmailVerified(false)
-            .createdAt(Instant.now())
-            .build();
+    User user = User.builder()
+        .email(request.getEmail())
+        .passwordHash(passwordEncoder.encode(request.getPassword()))
+        .fullName(request.getFullName())
+        .phoneNumber(request.getPhoneNumber())
+        .role(customerRole)
+        .status(USER_STATUS_PENDING)
+        .isEmailVerified(false)
+        .createdAt(Instant.now())
+        .build();
 
     user = userRepository.save(user);
 
@@ -110,10 +108,9 @@ public class AuthService {
       throw new BadRequestException("Email hoac mat khau khong dung");
     }
 
-    User user =
-        userRepository
-            .findByEmail(request.getEmail())
-            .orElseThrow(() -> new BadRequestException("Email hoac mat khau khong dung"));
+    User user = userRepository
+        .findByEmail(request.getEmail())
+        .orElseThrow(() -> new BadRequestException("Email hoac mat khau khong dung"));
 
     if (!USER_STATUS_ACTIVE.equals(user.getStatus()) && !USER_STATUS_PENDING.equals(user.getStatus())) {
       throw new BadRequestException("Tai khoan da bi khoa hoac vo hieu hoa");
@@ -130,19 +127,17 @@ public class AuthService {
 
   @Transactional
   public ApiResponse<Void> verifyEmail(VerifyEmailRequest request) {
-    User user =
-        userRepository
-            .findByEmail(request.getEmail())
-            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
+    User user = userRepository
+        .findByEmail(request.getEmail())
+        .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
 
     if (Boolean.TRUE.equals(user.getIsEmailVerified())) {
       throw new BadRequestException("Email da duoc xac thuc truoc do");
     }
 
-    EmailVerification verification =
-        emailVerificationRepository
-            .findByUserAndOtpCodeAndVerifiedFalse(user, request.getOtpCode())
-            .orElseThrow(() -> new BadRequestException("Ma OTP khong dung"));
+    EmailVerification verification = emailVerificationRepository
+        .findByUserAndOtpCodeAndVerifiedFalse(user, request.getOtpCode())
+        .orElseThrow(() -> new BadRequestException("Ma OTP khong dung"));
 
     if (verification.getExpiredAt().isBefore(Instant.now())) {
       throw new BadRequestException("Ma OTP da het han");
@@ -160,10 +155,9 @@ public class AuthService {
 
   @Transactional
   public ApiResponse<Void> resendOtp(ResendOtpRequest request) {
-    User user =
-        userRepository
-            .findByEmail(request.getEmail())
-            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
+    User user = userRepository
+        .findByEmail(request.getEmail())
+        .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
 
     if (Boolean.TRUE.equals(user.getIsEmailVerified())) {
       throw new BadRequestException("Email da duoc xac thuc truoc do");
@@ -178,21 +172,19 @@ public class AuthService {
 
   @Transactional
   public ApiResponse<Void> forgotPassword(ForgotPasswordRequest request) {
-    User user =
-        userRepository
-            .findByEmail(request.getEmail())
-            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung voi email nay"));
+    User user = userRepository
+        .findByEmail(request.getEmail())
+        .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung voi email nay"));
 
     String token = UUID.randomUUID().toString();
 
-    PasswordResetToken resetToken =
-        PasswordResetToken.builder()
-            .user(user)
-            .token(token)
-            .expiredAt(Instant.now().plus(passwordResetExpirationMinutes, ChronoUnit.MINUTES))
-            .used(false)
-            .createdAt(Instant.now())
-            .build();
+    PasswordResetToken resetToken = PasswordResetToken.builder()
+        .user(user)
+        .token(token)
+        .expiredAt(Instant.now().plus(passwordResetExpirationMinutes, ChronoUnit.MINUTES))
+        .used(false)
+        .createdAt(Instant.now())
+        .build();
 
     passwordResetTokenRepository.save(resetToken);
     emailService.sendPasswordResetEmail(user.getEmail(), user.getFullName(), token);
@@ -202,10 +194,9 @@ public class AuthService {
 
   @Transactional
   public ApiResponse<Void> resetPassword(ResetPasswordRequest request) {
-    PasswordResetToken resetToken =
-        passwordResetTokenRepository
-            .findByTokenAndUsedFalse(request.getToken())
-            .orElseThrow(() -> new BadRequestException("Token khong hop le hoac da duoc su dung"));
+    PasswordResetToken resetToken = passwordResetTokenRepository
+        .findByTokenAndUsedFalse(request.getToken())
+        .orElseThrow(() -> new BadRequestException("Token khong hop le hoac da duoc su dung"));
 
     if (!resetToken.isValid()) {
       throw new BadRequestException("Token da het han");
@@ -222,6 +213,7 @@ public class AuthService {
     return ApiResponse.success("Dat lai mat khau thanh cong");
   }
 
+  @Transactional
   public ApiResponse<Void> logout(User user) {
     loginSessionRepository.deactivateAllSessionsByUser(user);
     return ApiResponse.success("Dang xuat thanh cong", null);
@@ -239,10 +231,9 @@ public class AuthService {
       throw new BadRequestException("Token cung cap khong phai refresh token");
     }
 
-    LoginSession loginSession =
-        loginSessionRepository
-            .findByRefreshTokenAndIsActiveTrue(refreshToken)
-            .orElseThrow(() -> new BadRequestException("Refresh token da bi thu hoi hoac khong ton tai"));
+    LoginSession loginSession = loginSessionRepository
+        .findByRefreshTokenAndIsActiveTrue(refreshToken)
+        .orElseThrow(() -> new BadRequestException("Refresh token da bi thu hoi hoac khong ton tai"));
 
     if (!loginSession.isValid()) {
       loginSession.setIsActive(false);
@@ -251,10 +242,9 @@ public class AuthService {
     }
 
     String email = jwtService.extractEmail(refreshToken);
-    User user =
-        userRepository
-            .findByEmail(email)
-            .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
+    User user = userRepository
+        .findByEmail(email)
+        .orElseThrow(() -> new ResourceNotFoundException("Khong tim thay nguoi dung"));
 
     if (!loginSession.getUser().getUserId().equals(user.getUserId())) {
       throw new BadRequestException("Refresh token khong khop voi nguoi dung");
@@ -269,23 +259,21 @@ public class AuthService {
   }
 
   public ApiResponse<AuthResponse.UserInfo> getCurrentUser(User user) {
-    AuthResponse.UserInfo userInfo =
-        AuthResponse.UserInfo.builder()
-            .userId(user.getUserId())
-            .email(user.getEmail())
-            .fullName(user.getFullName())
-            .phoneNumber(user.getPhoneNumber())
-            .role(user.getRole().getRoleName())
-            .isEmailVerified(Boolean.TRUE.equals(user.getIsEmailVerified()))
-            .build();
+    AuthResponse.UserInfo userInfo = AuthResponse.UserInfo.builder()
+        .userId(user.getUserId())
+        .email(user.getEmail())
+        .fullName(user.getFullName())
+        .phoneNumber(user.getPhoneNumber())
+        .role(user.getRole().getRoleName())
+        .isEmailVerified(Boolean.TRUE.equals(user.getIsEmailVerified()))
+        .build();
 
     return ApiResponse.success("Lay thong tin thanh cong", userInfo);
   }
 
   private AuthResponse generateAuthResponse(User user) {
-    String accessToken =
-        jwtService.generateToken(
-            user.getEmail(), user.getRole().getRoleName(), user.getUserId(), user.getFullName());
+    String accessToken = jwtService.generateToken(
+        user.getEmail(), user.getRole().getRoleName(), user.getUserId(), user.getFullName());
 
     String refreshToken = jwtService.generateRefreshToken(user.getEmail(), user.getUserId());
     persistLoginSession(user, refreshToken);
@@ -308,24 +296,22 @@ public class AuthService {
   }
 
   private void persistLoginSession(User user, String refreshToken) {
-    LoginSession session =
-        LoginSession.builder()
-            .user(user)
-            .refreshToken(refreshToken)
-            .expiredAt(Instant.now().plusMillis(jwtService.getRefreshTokenExpiration()))
-            .lastAccessedAt(Instant.now())
-            .build();
+    LoginSession session = LoginSession.builder()
+        .user(user)
+        .refreshToken(refreshToken)
+        .expiredAt(Instant.now().plusMillis(jwtService.getRefreshTokenExpiration()))
+        .lastAccessedAt(Instant.now())
+        .build();
     loginSessionRepository.save(session);
   }
 
   private void createEmailVerification(User user, String otpCode) {
-    EmailVerification verification =
-        EmailVerification.builder()
-            .user(user)
-            .otpCode(otpCode)
-            .expiredAt(Instant.now().plus(otpExpirationMinutes, ChronoUnit.MINUTES))
-            .verified(false)
-            .build();
+    EmailVerification verification = EmailVerification.builder()
+        .user(user)
+        .otpCode(otpCode)
+        .expiredAt(Instant.now().plus(otpExpirationMinutes, ChronoUnit.MINUTES))
+        .verified(false)
+        .build();
 
     emailVerificationRepository.save(verification);
   }

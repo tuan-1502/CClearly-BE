@@ -7,6 +7,7 @@ import com.swp391.cclearly.entity.Promotion;
 import com.swp391.cclearly.exception.BadRequestException;
 import com.swp391.cclearly.exception.ResourceNotFoundException;
 import com.swp391.cclearly.repository.PromotionRepository;
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -41,6 +42,8 @@ public class PromotionService {
       throw new BadRequestException("Mã khuyến mãi đã tồn tại");
     }
 
+    validatePromotionRequest(request.getDiscountType(), request.getValue());
+
     Promotion promotion = Promotion.builder()
         .code(request.getCode().toUpperCase())
         .discountType(request.getDiscountType())
@@ -73,6 +76,8 @@ public class PromotionService {
     if (request.getUsageLimit() != null) promotion.setUsageLimit(request.getUsageLimit());
     if (request.getIsActive() != null) promotion.setIsActive(request.getIsActive());
 
+    validatePromotionRequest(promotion.getDiscountType(), promotion.getValue());
+
     promotionRepository.save(promotion);
     auditLogService.log("UPDATE_VOUCHER",
         "Cập nhật voucher: " + promotion.getCode());
@@ -102,6 +107,18 @@ public class PromotionService {
     return ApiResponse.success(
         promotion.getIsActive() ? "Kích hoạt khuyến mãi thành công" : "Vô hiệu hóa khuyến mãi thành công",
         toResponse(promotion));
+  }
+
+  private void validatePromotionRequest(String discountType, BigDecimal value) {
+    if (value == null || value.compareTo(BigDecimal.ZERO) < 0) {
+      throw new BadRequestException("Giá trị giảm giá không được âm");
+    }
+
+    if (discountType != null && (discountType.equalsIgnoreCase("PERCENT") || discountType.equalsIgnoreCase("PERCENTAGE"))) {
+      if (value.compareTo(BigDecimal.valueOf(100)) > 0) {
+        throw new BadRequestException("Phần trăm giảm giá không được vượt quá 100%");
+      }
+    }
   }
 
   private PromotionResponse toResponse(Promotion p) {

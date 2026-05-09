@@ -29,6 +29,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -112,6 +113,42 @@ public class AdminService {
           .build());
     }
 
+    // Revenue by quarter (last 4 quarters)
+    List<DashboardStatsResponse.RevenueByQuarter> revenueByQuarter = new ArrayList<>();
+    LocalDate currentLocalDate = LocalDate.now(zoneId);
+    int currentQuarter = (currentLocalDate.getMonthValue() - 1) / 3 + 1;
+    int currentYear = currentLocalDate.getYear();
+
+    for (int i = 3; i >= 0; i--) {
+      int q = currentQuarter - i;
+      int y = currentYear;
+      while (q <= 0) {
+        q += 4;
+        y -= 1;
+      }
+      String quarterLabel = "Q" + q + " " + y;
+      BigDecimal quarterRevenue = BigDecimal.ZERO;
+      long quarterOrders = 0;
+
+      for (Order o : deliveredOrderList) {
+        if (o.getCreatedAt() != null) {
+          LocalDate orderDate = o.getCreatedAt().atZone(zoneId).toLocalDate();
+          int oQ = (orderDate.getMonthValue() - 1) / 3 + 1;
+          int oY = orderDate.getYear();
+          if (oQ == q && oY == y) {
+            quarterRevenue = quarterRevenue.add(
+                o.getFinalAmount() != null ? o.getFinalAmount() : BigDecimal.ZERO);
+            quarterOrders++;
+          }
+        }
+      }
+      revenueByQuarter.add(DashboardStatsResponse.RevenueByQuarter.builder()
+          .quarter(quarterLabel)
+          .revenue(quarterRevenue)
+          .orders(quarterOrders)
+          .build());
+    }
+
     // Top products (from delivered order items)
     Map<UUID, String> productNames = new HashMap<>();
     Map<UUID, String> productTypes = new HashMap<>();
@@ -146,6 +183,12 @@ public class AdminService {
             .build())
         .collect(Collectors.toList());
 
+    double productivityRate = 0.0;
+    long activeOrders = totalOrders - cancelledOrders;
+    if (activeOrders > 0) {
+      productivityRate = ((double) deliveredOrders / activeOrders) * 100;
+    }
+
     DashboardStatsResponse stats = DashboardStatsResponse.builder()
         .totalOrders(totalOrders)
         .totalCustomers(totalCustomers)
@@ -157,7 +200,9 @@ public class AdminService {
         .cancelledOrders(cancelledOrders)
         .ordersByStatus(ordersByStatus)
         .revenueByMonth(revenueByMonth)
+        .revenueByQuarter(revenueByQuarter)
         .topProducts(topProducts)
+        .productivityRate(productivityRate)
         .build();
 
     return ApiResponse.success("Lấy thống kê dashboard thành công", stats);
@@ -230,16 +275,40 @@ public class AdminService {
     YearMonth thisMonth = YearMonth.now(zoneId);
     YearMonth lastMonth = thisMonth.minusMonths(1);
 
+    // This quarter / Last quarter revenue
+    LocalDate today = LocalDate.now(zoneId);
+    int thisQ = (today.getMonthValue() - 1) / 3 + 1;
+    int thisY = today.getYear();
+    
+    int lastQ = thisQ - 1;
+    int lastY = thisY;
+    if (lastQ == 0) {
+      lastQ = 4;
+      lastY -= 1;
+    }
+
     BigDecimal thisMonthRevenue = BigDecimal.ZERO;
     BigDecimal lastMonthRevenue = BigDecimal.ZERO;
+    BigDecimal thisQuarterRevenue = BigDecimal.ZERO;
+    BigDecimal lastQuarterRevenue = BigDecimal.ZERO;
 
     for (Order o : deliveredOrders) {
       if (o.getCreatedAt() != null && o.getFinalAmount() != null) {
-        YearMonth orderYm = YearMonth.from(o.getCreatedAt().atZone(zoneId));
+        ZonedDateTime zdt = o.getCreatedAt().atZone(zoneId);
+        YearMonth orderYm = YearMonth.from(zdt);
+        int orderQ = (zdt.getMonthValue() - 1) / 3 + 1;
+        int orderY = zdt.getYear();
+
         if (orderYm.equals(thisMonth)) {
           thisMonthRevenue = thisMonthRevenue.add(o.getFinalAmount());
         } else if (orderYm.equals(lastMonth)) {
           lastMonthRevenue = lastMonthRevenue.add(o.getFinalAmount());
+        }
+
+        if (orderQ == thisQ && orderY == thisY) {
+          thisQuarterRevenue = thisQuarterRevenue.add(o.getFinalAmount());
+        } else if (orderQ == lastQ && orderY == lastY) {
+          lastQuarterRevenue = lastQuarterRevenue.add(o.getFinalAmount());
         }
       }
     }
@@ -251,9 +320,15 @@ public class AdminService {
           .doubleValue() * 100;
     }
 
+    double quarterGrowthPercent = 0.0;
+    if (lastQuarterRevenue.compareTo(BigDecimal.ZERO) > 0) {
+      quarterGrowthPercent = thisQuarterRevenue.subtract(lastQuarterRevenue)
+          .divide(lastQuarterRevenue, 4, RoundingMode.HALF_UP)
+          .doubleValue() * 100;
+    }
+
     // Revenue by day (last N days)
     int numDays = Math.max(1, Math.min(days, 365));
-    LocalDate today = LocalDate.now(zoneId);
     DateTimeFormatter dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     List<RevenueResponse.DailyRevenue> revenueByDay = new ArrayList<>();
     for (int i = numDays - 1; i >= 0; i--) {
@@ -281,7 +356,10 @@ public class AdminService {
         .totalRevenue(totalRevenue)
         .thisMonthRevenue(thisMonthRevenue)
         .lastMonthRevenue(lastMonthRevenue)
+        .thisQuarterRevenue(thisQuarterRevenue)
+        .lastQuarterRevenue(lastQuarterRevenue)
         .growthPercent(growthPercent)
+        .quarterGrowthPercent(quarterGrowthPercent)
         .revenueByDay(revenueByDay)
         .build();
 

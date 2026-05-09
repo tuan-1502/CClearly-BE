@@ -11,7 +11,10 @@ public class RevenueResponse {
   private BigDecimal totalRevenue;
   private BigDecimal thisMonthRevenue;
   private BigDecimal lastMonthRevenue;
+  private BigDecimal thisQuarterRevenue;
+  private BigDecimal lastQuarterRevenue;
   private double growthPercent;
+  private double quarterGrowthPercent;
   private List<DailyRevenue> revenueByDay;
 
   @Data
