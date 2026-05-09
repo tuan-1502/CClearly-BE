@@ -41,7 +41,7 @@ public class PublicController {
         "freeShippingThreshold", freeShippingThreshold
     );
 
-    return ApiResponse.success("Lay cau hinh van chuyen thanh cong", config);
+    return ApiResponse.success("Lấy cấu hình vận chuyển thành công", config);
   }
 
   @PostMapping("/promotions/validate")
@@ -55,17 +55,17 @@ public class PublicController {
           ? new BigDecimal(body.get("orderTotal").toString())
           : BigDecimal.ZERO;
     } catch (NumberFormatException ex) {
-      return ApiResponse.error("Gia tri don hang khong hop le");
+      return ApiResponse.error("Giá trị đơn hàng không hợp lệ");
     }
 
     if (code.isEmpty()) {
-      return ApiResponse.error("Vui long nhap ma giam gia");
+      return ApiResponse.error("Vui lòng nhập mã giảm giá");
     }
 
     try {
       var appliedPromotion = promotionValidationService.validate(code, orderTotal);
       return ApiResponse.success(
-          "Ap dung ma giam gia thanh cong",
+          "Áp dụng mã giảm giá thành công",
           promotionValidationService.toValidationResponse(appliedPromotion));
     } catch (BadRequestException ex) {
       return ApiResponse.error(ex.getMessage());

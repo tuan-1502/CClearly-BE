@@ -23,27 +23,27 @@ public class PromotionValidationService {
     BigDecimal safeOrderTotal = orderTotal != null ? orderTotal : BigDecimal.ZERO;
 
     if (normalizedCode.isEmpty()) {
-      throw new BadRequestException("Vui long nhap ma giam gia");
+      throw new BadRequestException("Vui lòng nhập mã giảm giá");
     }
 
     Promotion promo = promotionRepository.findByCode(normalizedCode)
-        .orElseThrow(() -> new BadRequestException("Ma giam gia khong ton tai"));
+        .orElseThrow(() -> new BadRequestException("Mã giảm giá không tồn tại"));
 
     if (!Boolean.TRUE.equals(promo.getIsActive())) {
-      throw new BadRequestException("Ma giam gia da het hieu luc");
+      throw new BadRequestException("Mã giảm giá đã hết hiệu lực");
     }
 
     if (promo.getValue() == null || promo.getValue().compareTo(BigDecimal.ZERO) <= 0) {
-      throw new BadRequestException("Ma giam gia khong hop le");
+      throw new BadRequestException("Giá trị giảm giá của mã này không hợp lệ (phải lớn hơn 0)");
     }
 
     if (promo.getUsageLimit() != null
         && orderRepository.countByCoupon_PromotionId(promo.getPromotionId()) >= promo.getUsageLimit()) {
-      throw new BadRequestException("Ma giam gia da het luot su dung");
+      throw new BadRequestException("Mã giảm giá đã hết lượt sử dụng");
     }
 
     if (promo.getMinOrder() != null && safeOrderTotal.compareTo(promo.getMinOrder()) < 0) {
-      throw new BadRequestException("Don hang chua dat gia tri toi thieu de dung ma nay");
+      throw new BadRequestException("Đơn hàng chưa đạt giá trị tối thiểu để dùng mã này");
     }
 
     boolean isPercent = isPercentDiscount(promo.getDiscountType());
@@ -57,7 +57,7 @@ public class PromotionValidationService {
     } else if ("FIXED".equalsIgnoreCase(promo.getDiscountType())) {
       discountAmount = promo.getValue();
     } else {
-      throw new BadRequestException("Loai ma giam gia khong hop le");
+      throw new BadRequestException("Loại mã giảm giá không hợp lệ");
     }
 
     if (discountAmount.compareTo(safeOrderTotal) > 0) {

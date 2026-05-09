@@ -18,13 +18,23 @@ public class DashboardStatsResponse {
   private long deliveredOrders;
   private long cancelledOrders;
   private List<RevenueByMonth> revenueByMonth;
+  private List<RevenueByQuarter> revenueByQuarter;
   private Map<String, Long> ordersByStatus;
   private List<TopProduct> topProducts;
+  private double productivityRate;
 
   @Data
   @Builder
   public static class RevenueByMonth {
     private String month;
+    private BigDecimal revenue;
+    private long orders;
+  }
+
+  @Data
+  @Builder
+  public static class RevenueByQuarter {
+    private String quarter; // e.g., "Q1 2024"
     private BigDecimal revenue;
     private long orders;
   }

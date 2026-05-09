@@ -50,6 +50,7 @@ tmp/
 *.bak
 *.swp
 thumb.db
+db.sql
 
 ### Local Docker Volumes (if using bind mounts in future) ###
 sqlserver_data/
